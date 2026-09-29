@@ -31,6 +31,16 @@ export interface Submissions {
   sicDescription?: string;
   tickers?: string[];
   fiscalYearEnd?: string;
+  filings?: { recent?: { form?: string[] } };
+}
+
+/** "extranjera": presenta 20-F/40-F; "sin10k": local pero todavía sin 10-K (p. ej. una holding nueva); "local": presenta 10-K. */
+export function tipoEmisor(sub: Submissions): "local" | "extranjera" | "sin10k" {
+  const f = sub.filings?.recent?.form;
+  if (!f?.length) return "local";
+  if (f.some(x => x.startsWith("10-K"))) return "local";
+  if (f.some(x => x === "20-F" || x === "40-F" || x === "20-F/A" || x === "40-F/A")) return "extranjera";
+  return "sin10k";
 }
 
 const esAnual = (form: string) => /^(10-K|10-KT)(\/A)?$/.test(form);
@@ -124,18 +134,52 @@ export function epsAjustado(hs: Hecho[]): { porCierre: Map<string, number>; spli
 }
 
 /** Clasificación por código SIC. */
-export function clasificarSic(sic: number | null) {
-  if (sic === null || !Number.isFinite(sic)) return { sector: "Sin clasificar", financiera: false, ciclica: false };
+/** Sectores al estilo GICS (los del mapa del S&P 500) a partir del código SIC de EDGAR. */
+export const SECTORES = ["Tecnología", "Comunicaciones", "Salud", "Finanzas", "Consumo discrecional", "Consumo básico", "Industria", "Energía", "Servicios públicos", "Materiales", "Inmobiliario"] as const;
+
+const RANGOS_SECTOR: [number, number, (typeof SECTORES)[number]][] = [
+  // Orden importa: el primer rango que contiene al SIC gana.
+  [6324, 6324, "Salud"], [7320, 7329, "Finanzas"], [3559, 3559, "Tecnología"], [3822, 3822, "Industria"], [3600, 3600, "Industria"],
+  [6500, 6553, "Inmobiliario"], [6798, 6798, "Inmobiliario"], [6000, 6799, "Finanzas"],
+  [1300, 1399, "Energía"], [2900, 2999, "Energía"], [4610, 4619, "Energía"], [4922, 4923, "Energía"],
+  [4900, 4999, "Servicios públicos"],
+  [2830, 2836, "Salud"], [3840, 3851, "Salud"], [8000, 8099, "Salud"], [5047, 5047, "Salud"], [5122, 5122, "Salud"], [8731, 8731, "Salud"],
+  [3630, 3639, "Consumo discrecional"],
+  [3570, 3579, "Tecnología"], [3600, 3699, "Tecnología"], [3820, 3829, "Tecnología"], [3570, 3579, "Tecnología"], [7371, 7379, "Tecnología"],
+  [7370, 7370, "Comunicaciones"], [4800, 4899, "Comunicaciones"], [7810, 7849, "Comunicaciones"], [2710, 2799, "Comunicaciones"],
+  [2000, 2199, "Consumo básico"], [2840, 2844, "Consumo básico"], [5140, 5149, "Consumo básico"], [5180, 5182, "Consumo básico"],
+  [5400, 5499, "Consumo básico"], [5310, 5399, "Consumo básico"], [5912, 5912, "Consumo básico"],
+  [1000, 1299, "Materiales"], [1400, 1499, "Materiales"], [2400, 2499, "Materiales"], [2600, 2699, "Materiales"], [2800, 2829, "Materiales"],
+  [2850, 2899, "Materiales"], [3000, 3099, "Materiales"], [3200, 3399, "Materiales"],
+  [2200, 2399, "Consumo discrecional"], [2500, 2599, "Consumo discrecional"], [3140, 3149, "Consumo discrecional"], [3710, 3716, "Consumo discrecional"],
+  [3940, 3949, "Consumo discrecional"], [4700, 4799, "Consumo discrecional"], [5200, 5999, "Consumo discrecional"], [7000, 7099, "Consumo discrecional"],
+  [7900, 7999, "Consumo discrecional"], [8200, 8299, "Consumo discrecional"],
+  [1500, 1799, "Industria"], [3400, 3569, "Industria"], [3580, 3599, "Industria"], [3700, 3819, "Industria"], [4000, 4599, "Industria"],
+  [5000, 5199, "Industria"], [7350, 7359, "Industria"], [7380, 7389, "Industria"], [8700, 8799, "Industria"],
+];
+
+/** Casos conocidos donde el SIC y GICS no coinciden (medios de pago, ciencias de la vida, etc.). */
+const SECTOR_POR_TICKER: Record<string, string> = {
+  V: "Finanzas", MA: "Finanzas", PYPL: "Finanzas", FI: "Finanzas", MCO: "Finanzas",
+  TMO: "Salud", DHR: "Salud", A: "Salud", IQV: "Salud",
+  ACN: "Tecnología", GLW: "Tecnología", ADP: "Industria", PAYX: "Industria", HWM: "Industria",
+  DASH: "Consumo discrecional", ABNB: "Consumo discrecional",
+};
+
+export function sectorPorSic(sic: number | null, ticker?: string): string {
+  if (ticker && SECTOR_POR_TICKER[ticker]) return SECTOR_POR_TICKER[ticker];
+  if (sic === null || !Number.isFinite(sic)) return "Otros";
+  return RANGOS_SECTOR.find(([a, b]) => sic >= a && sic <= b)?.[2] ?? "Otros";
+}
+
+/** Clasificación por código SIC. */
+export function clasificarSic(sic: number | null, ticker?: string) {
+  if (sic === null || !Number.isFinite(sic)) return { sector: sectorPorSic(null, ticker), financiera: false, ciclica: false };
   const financiera = sic >= 6000 && sic < 6500;
   const ciclica =
     (sic >= 1000 && sic < 1500) || (sic >= 2800 && sic < 2830) || (sic >= 2900 && sic < 3000) ||
     (sic >= 3310 && sic < 3400) || (sic >= 3710 && sic < 3720) || (sic >= 4400 && sic < 4500) || (sic >= 1520 && sic < 1540);
-  const d = Math.floor(sic / 100);
-  const sector =
-    d < 10 ? "Agro y pesca" : d < 15 ? "Minería y energía" : d < 18 ? "Construcción" : d < 40 ? "Industria" :
-    d < 50 ? "Transporte y servicios públicos" : d < 52 ? "Comercio mayorista" : d < 60 ? "Comercio minorista" :
-    d < 68 ? "Finanzas y seguros" : d < 90 ? "Servicios" : "Otros";
-  return { sector, financiera, ciclica };
+  return { sector: sectorPorSic(sic, ticker), financiera, ciclica };
 }
 
 /** "COCA COLA CO" → "Coca Cola Co" */
@@ -143,8 +187,9 @@ const titulo = (s: string) => s.toLowerCase().replace(/(^|[\s\-/&.(])([a-z])/g, 
 
 const ETIQ = {
   eps: ["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted", "EarningsPerShareBasic"],
-  ventas: ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "SalesRevenueGoodsNet", "RevenuesNetOfInterestExpense", "InterestAndDividendIncomeOperating"],
-  gananciaNeta: ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"],
+  ventas: ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "SalesRevenueGoodsNet", "RevenuesNetOfInterestExpense", "RegulatedAndUnregulatedOperatingRevenue", "ElectricUtilityRevenue", "InterestAndDividendIncomeOperating", "InterestAndFeeIncomeLoansAndLeases"],
+  // Primero la ganancia de los accionistas comunes (sin preferidas ni minoritarios), que es la que va con la EPS.
+  gananciaNeta: ["NetIncomeLossAvailableToCommonStockholdersDiluted", "NetIncomeLossAvailableToCommonStockholdersBasic", "NetIncomeLoss", "ProfitLoss"],
   patrimonio: ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
   activoCorriente: ["AssetsCurrent"],
   pasivoCorriente: ["LiabilitiesCurrent"],
@@ -170,8 +215,28 @@ const ETIQ = {
 
 export class ErrorEdgar extends Error {}
 
+/**
+ * Ingresos anuales recientes, en millones, de cualquier formulario: el último ejercicio de un 10-K o el último
+ * trimestre de un 10-Q × 4. Sirve para validar capitalizaciones que no salen del análisis completo.
+ */
+export function ingresosRecientes(cf: CompanyFacts): number | null {
+  let mejor: { end: string; val: number } | null = null;
+  for (const et of ETIQ.ventas) {
+    for (const h of cf.facts["us-gaap"]?.[et]?.units?.USD ?? []) {
+      if (!h.start) continue;
+      const d = dias(h.start, h.end);
+      const anual = d >= 350 && d <= 380 ? h.val : d >= 80 && d <= 100 ? h.val * 4 : null;
+      if (anual !== null && anual > 0 && (!mejor || h.end > mejor.end)) mejor = { end: h.end, val: anual };
+    }
+  }
+  return mejor ? mejor.val / 1e6 : null;
+}
+
 export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: string, precio: number | null, maxAnios = 10): Empresa & { precio: number } {
   const avisos: string[] = [];
+  const tipo = tipoEmisor(sub);
+  if (tipo === "extranjera") throw new ErrorEdgar("Es una emisora extranjera (presenta 20-F/40-F, no 10-K): no forma parte del S&P 500 y el motor sólo lee 10-K. Cargala a mano.");
+  if (tipo === "sin10k") throw new ErrorEdgar(`${sub.name} todavía no presentó un 10-K anual (es una entidad nueva o cambió de estructura societaria, como ExxonMobil en 2026). Cargala a mano con los datos del último balance anual.`);
   if (!cf.facts["us-gaap"]) {
     throw new ErrorEdgar(cf.facts["ifrs-full"]
       ? "Esta empresa reporta en IFRS (formulario 20-F/40-F). Por ahora el motor sólo lee estados en us-gaap: cargala a mano."
@@ -179,8 +244,19 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
   }
 
   // EPS por ejercicio, ajustado por splits
-  const epsH = hechos(cf, ETIQ.eps, "USD/shares");
+  let epsH = hechos(cf, ETIQ.eps, "USD/shares");
   const CLASES = "Puede que reporte la ganancia por clase de acción (como Visa o Berkshire Hathaway): cargala a mano.";
+  if (!epsH.length) {
+    // Algunas empresas (Airbnb, Constellation Brands) no etiquetan la EPS sin dimensiones: se calcula como
+    // ganancia de los accionistas comunes / acciones promedio diluidas, ejercicio por ejercicio.
+    const gnA = anuales(hechos(cf, ETIQ.gananciaNeta));
+    const accA = anuales(hechos(cf, ETIQ.accionesPromedio, "shares"));
+    const calculada: Hecho[] = [...gnA].flatMap(([end, h]) => { const a = accA.get(end); return a && a.val > 0 ? [{ ...h, val: h.val / a.val }] : []; });
+    if (calculada.length >= 4) {
+      epsH = calculada;
+      avisos.push("EDGAR no trae la EPS sin desagregar: se calculó como ganancia de los accionistas comunes / acciones promedio diluidas.");
+    }
+  }
   if (!epsH.length) {
     const soloTrimestral = ETIQ.eps.some(et => cf.facts["us-gaap"]?.[et]?.units?.["USD/shares"]?.length);
     throw new ErrorEdgar(soloTrimestral
@@ -275,13 +351,13 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
   for (const a of aniosCon) { if (pagoEn(a)) aniosDividendos++; else break; }
 
   const sic = sub.sic ? Number(sub.sic) : null;
-  const cls = clasificarSic(sic);
+  const cls = clasificarSic(sic, ticker.toUpperCase());
   const faltantes = [
     ["activo corriente", inst(ETIQ.activoCorriente)], ["pasivo corriente", inst(ETIQ.pasivoCorriente)], ["caja", inst(ETIQ.caja)], ["flujo operativo", flujoOperativo],
   ].filter(([, v]) => v === null).map(([n]) => n);
   if (faltantes.length && !cls.financiera) avisos.push(`Sin dato en el 10-K: ${faltantes.join(", ")}.`);
 
-  const avisosFinales = cls.financiera ? avisos.filter(a => a.startsWith("EPS") || a.startsWith("Acciones")) : avisos;
+  const avisosFinales = cls.financiera ? avisos.filter(a => /^(EPS|Acciones|EDGAR no trae)/.test(a)) : avisos;
 
   const cik = String(cf.cik).padStart(10, "0");
   const base: Empresa = {

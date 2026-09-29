@@ -20,3 +20,7 @@ sin framework de UI. Textos de la interfaz y documentación en español rioplate
 - Estilo visual: tokens en `:root` de `src/web/estilos.css` (claro y oscuro).
 - Para probar el servidor sin red, se puede sembrar `.cache/edgar/` con los JSON del fixture.
 - En la nube, Node necesita `NODE_USE_ENV_PROXY=1` para que `fetch` use el proxy del entorno (EDGAR, Yahoo).
+- Precios en `src/edgar/precios.ts`: Yahoo "spark" (20 símbolos por llamada), con reintento ante 429. Stooq ya no sirve.
+- Mapa del mercado: `src/engine/mapa.ts` (treemap puro) + `mapaHTML` en `src/web/graficos.ts`. El universo y los
+  sectores salen del snapshot (`mapa`); con servidor, `/api/mapa` actualiza precios y variación en vivo.
+- Sectores tipo GICS desde el SIC en `sectorPorSic` (`src/edgar/xbrl.ts`), con excepciones por ticker.

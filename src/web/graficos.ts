@@ -1,5 +1,7 @@
 import { type Analisis, clamp, hash, rng } from "../engine/analisis.ts";
 import type { Empresa } from "../engine/tipos.ts";
+import type { CeldaMapa } from "../engine/snapshot.ts";
+import { squarify } from "../engine/mapa.ts";
 import { fmtPrecio, nf2 } from "../engine/formato.ts";
 
 export const esc = (s: unknown) =>
@@ -104,4 +106,36 @@ export function epsChart(a: Analisis): string {
     <line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--ink-3)"></line>${bars}
     ${line(a.d.epsFin, "promedio últimos 3 años", "var(--ink-2)")}${a.d.ciclica ? line(a.d.epsNormal, "ganancia normalizada", "var(--engrave)") : ""}
   </svg></div>`;
+}
+
+/* ============================================================
+   Mapa del mercado (treemap por sector, color = variación del día)
+   ============================================================ */
+const colorVariacion = (v: number | null) => {
+  if (v === null || !Number.isFinite(v)) return "var(--map-neu)";
+  const k = Math.round(Math.min(1, Math.abs(v) / 3) * 100);
+  return `color-mix(in oklab, var(--map-neu), var(${v >= 0 ? "--map-pos" : "--map-neg"}) ${k}%)`;
+};
+const signo = (v: number) => (v > 0 ? "+" : v < 0 ? "−" : "") + nf2.format(Math.abs(v)) + " %";
+
+export function mapaHTML(celdas: CeldaMapa[], W: number, H: number): string {
+  const porSector = new Map<string, CeldaMapa[]>();
+  for (const c of celdas) { if (!porSector.has(c.sector)) porSector.set(c.sector, []); porSector.get(c.sector)!.push(c); }
+  const sectores = [...porSector].map(([nombre, cs]) => ({ nombre, cs, cap: cs.reduce((s, c) => s + c.cap, 0) }));
+  const pct = (v: number, t: number) => ((v / t) * 100).toFixed(3) + "%";
+  let html = "";
+  for (const s of squarify(sectores, x => x.cap, { x: 0, y: 0, w: W, h: H })) {
+    const cab = s.h > 60 && s.w > 60 ? 17 : 0;
+    html += `<div class="sector" style="left:${pct(s.x, W)};top:${pct(s.y, H)};width:${pct(s.w, W)};height:${pct(s.h, H)}">${cab ? `<span>${esc(s.item.nombre)}</span>` : ""}</div>`;
+    for (const t of squarify(s.item.cs, c => c.cap, { x: s.x, y: s.y + cab, w: s.w, h: s.h - cab })) {
+      const c = t.item, lado = Math.min(t.w, t.h);
+      const fs = Math.max(8, Math.min(34, lado / 3.2, t.w / (c.ticker.length * 0.72)));
+      const etiqueta = lado >= 16 && t.w >= 22
+        ? `<b style="font-size:${fs.toFixed(1)}px">${esc(c.ticker)}</b>${lado >= 34 && c.variacion !== null ? `<small style="font-size:${Math.max(8, fs * 0.5).toFixed(1)}px">${signo(c.variacion)}</small>` : ""}`
+        : "";
+      const titulo = `${c.nombre} (${c.ticker}) · ${fmtPrecio(c.precio)}${c.variacion !== null ? ` · ${signo(c.variacion)} en el día` : ""} · capitalización ${Math.round(c.cap / 1000).toLocaleString("es-AR")} mil M${c.analizable ? "" : ` · no se puede analizar automáticamente`}`;
+      html += `<button type="button" class="tile${c.analizable ? "" : " no"}" data-t="${esc(c.ticker)}" title="${esc(titulo)}" aria-label="${esc(titulo)}" style="left:${pct(t.x, W)};top:${pct(t.y, H)};width:${pct(t.w, W)};height:${pct(t.h, H)};background-color:${colorVariacion(c.variacion)}">${etiqueta}</button>`;
+    }
+  }
+  return html;
 }

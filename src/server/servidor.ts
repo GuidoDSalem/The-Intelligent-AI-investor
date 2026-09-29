@@ -4,7 +4,8 @@ import path from "node:path";
 import { analizar, validarEmpresa } from "../engine/analisis.ts";
 import { promptS2 } from "../engine/sistema2.ts";
 import type { Empresa } from "../engine/tipos.ts";
-import { buscar, empresaEdgar } from "../edgar/cliente.ts";
+import { buscar, cotizaciones, empresaEdgar } from "../edgar/cliente.ts";
+import type { CeldaMapa, Snapshot } from "../engine/snapshot.ts";
 import { ErrorEdgar } from "../edgar/xbrl.ts";
 import { claudeDisponible, consultarS2, ErrorS2, MODELO_S2 } from "./claude.ts";
 
@@ -13,6 +14,7 @@ import { claudeDisponible, consultarS2, ErrorS2, MODELO_S2 } from "./claude.ts";
  *   GET  /api/estado                 qué fuentes están disponibles
  *   GET  /api/buscar?q=coca          autocompletado de tickers de EDGAR
  *   GET  /api/empresa/KO?precio=62   datos de EDGAR ya convertidos a `Empresa`
+ *   GET  /api/mapa                   el mapa del snapshot con precios y variación del día en vivo
  *   POST /api/sistema2               { empresa } → razonamiento de Claude
  */
 const PUERTO = Number(process.env.PORT || 5173);
@@ -30,7 +32,24 @@ async function leerCuerpo(req: IncomingMessage, max = 200_000): Promise<unknown>
   return JSON.parse(s || "{}");
 }
 
+/** Mapa del mercado: universo y sectores del snapshot, precios en vivo (Yahoo, lotes de 20, caché de 5 min). */
+async function mapaEnVivo(): Promise<{ fecha: string; mapa: CeldaMapa[] }> {
+  let snap: Snapshot;
+  try { snap = JSON.parse(await readFile(path.resolve("data/snapshot.json"), "utf8")); } catch { return { fecha: "", mapa: [] }; }
+  const base = snap.mapa ?? [];
+  const cots = await cotizaciones(base.map(c => c.ticker));
+  let fecha = "";
+  const mapa = base.map(c => {
+    const q = cots.get(c.ticker);
+    if (!q) return c;
+    fecha = q.fecha > fecha ? q.fecha : fecha;
+    return { ...c, cap: Math.round(c.cap * (q.precio / c.precio)), precio: q.precio, variacion: q.variacion ?? c.variacion };
+  });
+  return { fecha: fecha || snap.generado.slice(0, 10), mapa };
+}
+
 async function api(req: IncomingMessage, res: ServerResponse, url: URL) {
+  if (url.pathname === "/api/mapa") return json(res, 200, await mapaEnVivo());
   if (url.pathname === "/api/estado") {
     return json(res, 200, { edgar: !!process.env.SEC_USER_AGENT, claude: claudeDisponible(), modeloS2: MODELO_S2, precios: process.env.PRECIOS !== "off" });
   }

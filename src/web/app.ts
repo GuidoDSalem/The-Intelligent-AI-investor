@@ -4,12 +4,12 @@ import { fmtPrecio, millones, nf1, nf2, parsearLista, pct } from "../engine/form
 import { promptS2, type RespuestaS2, validarS2 } from "../engine/sistema2.ts";
 import { SUPUESTOS } from "../engine/supuestos.ts";
 import type { Empresa, VeredictoId } from "../engine/tipos.ts";
-import { epsChart, esc, logoSVG, rangeBar, rosettePath, sparkSVG, valuationChart } from "./graficos.ts";
+import type { CeldaMapa, Snapshot } from "../engine/snapshot.ts";
+import { epsChart, esc, logoSVG, mapaHTML, rangeBar, rosettePath, sparkSVG, valuationChart } from "./graficos.ts";
 
 /* ============================================================
    Estado y fuentes de datos
    ============================================================ */
-interface Snapshot { generado: string; criterio?: string; destacadas?: string[]; empresas: Empresa[] }
 interface EstadoServidor { edgar: boolean; claude: boolean; modeloS2: string; precios: boolean }
 type Sample = ((input: string, opts?: object) => Promise<{ text: string }>) & { json: (input: string, opts?: object) => Promise<unknown> };
 declare global {
@@ -131,7 +131,7 @@ function renderFooter() {
   const S = SUPUESTOS;
   $("foot").innerHTML = `
     <p><strong>Supuestos del motor.</strong> Rendimiento exigido entre ${pct(S.tasa[0])} y ${pct(S.tasa[1])}; crecimiento perpetuo entre ${nf1.format(S.crecimientoTerminal[0] * 100)} % y ${nf1.format(S.crecimientoTerminal[1] * 100)} %; ${S.horizonte} años de crecimiento explícito, acotado entre ${pct(S.crecimientoLimites[0])} y ${pct(S.crecimientoLimites[1])}. “Comprar con margen” exige un valor mediano de al menos ${nf2.format(S.umbralComprar)} veces el precio; “Cara”, menos de ${nf2.format(S.umbralCara)} veces. Debajo de ${pct(S.confianzaMinima)} de confianza, el caso se escala al Sistema 2.</p>
-    <p>Datos reales: estados contables anuales (10-K) de SEC EDGAR en formato XBRL. EDGAR no publica precios: se toman de Stooq cuando se puede o los ingresás vos. Las ponderaciones del Sistema 1 están fijadas a mano, no calibradas con datos históricos. Esto es una herramienta de estudio, no una recomendación de inversión.</p>`;
+    <p>Datos reales: estados contables anuales (10-K) de SEC EDGAR en formato XBRL. EDGAR no publica precios: se toman de Yahoo Finance o los ingresás vos. Las ponderaciones del Sistema 1 están fijadas a mano, no calibradas con datos históricos. Esto es una herramienta de estudio, no una recomendación de inversión.</p>`;
 }
 
 function renderAll() {
@@ -322,9 +322,11 @@ function refrescarTrasS2(a: Analisis) {
    Búsqueda por ticker (EDGAR vía servidor, o snapshot en la versión publicada)
    ============================================================ */
 let pendiente: Empresa | null = null;
-const msg = (t: string, tipo: "" | "err" | "ok" = "") => { const m = $("qMsg"); m.textContent = t; m.className = "msg " + tipo; };
+/** Los mensajes salen junto a donde se originó la acción: el buscador o el mapa. */
+let destinoMsg = "qMsg";
+const msg = (t: string, tipo: "" | "err" | "ok" = "") => { const m = $(destinoMsg); m.textContent = t; m.className = "msg " + tipo; };
 
-async function traerDeEdgar(ticker: string, precio?: number) {
+async function traerDeEdgar(ticker: string, precio?: number, respaldo?: { precio: number; fecha: string }) {
   msg(`Buscando ${ticker} en EDGAR…`);
   $<HTMLButtonElement>("qIr").disabled = true;
   try {
@@ -332,9 +334,14 @@ async function traerDeEdgar(ticker: string, precio?: number) {
     const body = await res.json();
     if (!res.ok) { msg(body.error ?? `Error ${res.status}`, "err"); return; }
     const e = body as Empresa;
+    if (!(e.precio > 0) && respaldo) {
+      terminarAlta({ ...e, precio: respaldo.precio, fuente: { ...e.fuente!, precioFuente: "Yahoo Finance (mapa)", precioFecha: respaldo.fecha } });
+      return;
+    }
     if (!(e.precio > 0)) {
       pendiente = e;
-      msg(`Encontré ${e.nombre} (ejercicio cerrado el ${e.fuente?.cierre}). EDGAR no publica precios y no pude obtenerlo solo: ingresá el precio por acción y apretá Analizar.`, "err");
+      destinoMsg = "qMsg";
+      msg(`Encontré ${e.nombre} (ejercicio cerrado el ${e.fuente?.cierre}), pero no pude obtener el precio${e.fuente?.precioError ? `: ${e.fuente.precioError}` : ""}. Ingresá el precio por acción y apretá Analizar.`, "err");
       $("qPrecio").focus();
       return;
     }
@@ -399,6 +406,58 @@ function onEscribir() {
     }
     dl.innerHTML = lista.map(x => `<option value="${esc(x.ticker)}">${esc(x.nombre)}</option>`).join("");
   }, 200);
+}
+
+/* ============================================================
+   Mapa del mercado
+   ============================================================ */
+let mapaDatos: CeldaMapa[] = SNAPSHOT.mapa ?? [];
+let mapaVivo: { fecha: string } | null = null;
+let anchoMapa = 0;
+
+function renderMapa(forzar = false) {
+  const sec = $("mapaSec"), el = $("mapa");
+  sec.hidden = !mapaDatos.length;
+  if (!mapaDatos.length) return;
+  const W = el.clientWidth;
+  if (!W || (!forzar && W === anchoMapa)) return;
+  anchoMapa = W;
+  const H = Math.round(W >= 700 ? W * 0.56 : Math.max(480, W * 1.45));
+  el.style.height = H + "px";
+  el.innerHTML = mapaHTML(mapaDatos, W, H);
+  const fecha = mapaVivo ? `en vivo (${mapaVivo.fecha})` : `al ${SNAPSHOT.generado.slice(0, 10)}`;
+  $("mapaNota").textContent = `${mapaDatos.length} mayores empresas de EE. UU. por sector. Tamaño: capitalización; color: variación del día ${fecha}. Tocá una para analizarla.`;
+}
+
+async function analizarTicker(t: string) {
+  destinoMsg = "mapaMsg";
+  const celda = mapaDatos.find(c => c.ticker === t);
+  try {
+    if (celda && !celda.analizable && !servidor?.edgar) { msg(`${celda.nombre}: ${celda.motivo ?? "no se puede analizar automáticamente."}`, "err"); return; }
+    if (servidor?.edgar) {
+      await traerDeEdgar(t, undefined, celda ? { precio: celda.precio, fecha: mapaVivo?.fecha ?? SNAPSHOT.generado.slice(0, 10) } : undefined);
+      return;
+    }
+    const conocida = [...mias, ...SNAPSHOT.empresas].find(e => e.ticker === t);
+    if (!conocida) { msg(`${t} no está entre las empresas guardadas en esta página. Corré el servidor local (npm start) para analizarla en vivo.`, "err"); return; }
+    msg("");
+    if (analisis.some(a => idDe(a.c) === idDe(conocida))) openDetail(idDe(conocida));
+    else terminarAlta(conocida);
+  } finally {
+    destinoMsg = "qMsg";
+  }
+}
+
+async function mapaEnVivo() {
+  try {
+    const res = await fetch("/api/mapa", { signal: AbortSignal.timeout(60000) });
+    if (!res.ok) return;
+    const body = (await res.json()) as { fecha: string; mapa: CeldaMapa[] };
+    if (!body.mapa?.length) return;
+    mapaDatos = body.mapa;
+    mapaVivo = { fecha: body.fecha };
+    renderMapa(true);
+  } catch { /* queda el mapa del snapshot */ }
 }
 
 /* ============================================================
@@ -478,6 +537,9 @@ function onAplicarJson() {
    Arranque
    ============================================================ */
 function eventos() {
+  $("mapa").addEventListener("click", e => { const b = (e.target as HTMLElement).closest<HTMLElement>(".tile"); if (b) analizarTicker(b.dataset.t!); });
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renderMapa(), 120); }).observe($("mapaSec"));
   $("chips").addEventListener("click", e => { const b = (e.target as HTMLElement).closest<HTMLElement>(".chip"); if (!b) return; UI.filtro = b.dataset.f!; saveUI(); renderChips(); renderList(); });
   $("sort").addEventListener("change", e => { UI.orden = (e.target as HTMLSelectElement).value; saveUI(); renderList(); });
   $("verEjemplos").addEventListener("change", e => { UI.verEjemplos = (e.target as HTMLInputElement).checked; saveUI(); renderAll(); });
@@ -507,5 +569,6 @@ async function detectarServidor(): Promise<EstadoServidor | null> {
 $("bgRosette").setAttribute("d", rosettePath(hash("GRAHAM-1949"), 48));
 eventos();
 renderAll();
-detectarServidor().then(s => { servidor = s; renderEstado(); });
+detectarServidor().then(s => { servidor = s; renderEstado(); if (s) mapaEnVivo(); });
+renderMapa(true);
 getSample().then(s => { sampleDisponible = !!s; });

@@ -1,6 +1,8 @@
+export { type Cotizacion, cotizacion, cotizaciones } from "./precios.ts";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Empresa } from "../engine/tipos.ts";
+import { type Cotizacion, cotizacion, ultimoError } from "./precios.ts";
 import { type CompanyFacts, empresaDesdeEdgar, ErrorEdgar, type Submissions } from "./xbrl.ts";
 
 /**
@@ -113,7 +115,12 @@ export async function candidatasPorTamano(): Promise<Candidata[]> {
   const acciones = await ultimoPorCik("EntityCommonStockSharesOutstanding", "shares", trimestres(4));
   const flotante = await ultimoPorCik("EntityPublicFloat", "USD", trimestres(8));
   const porCik = new Map<string, TickerSec>();
-  for (const t of await listaTickers()) if (!porCik.has(t.cik)) porCik.set(t.cik, t);
+  // Varios tickers por empresa: el primero que lista la SEC (la acción común principal), salteando los que
+  // tienen "-" (preferidas, como JPM-PM), salvo que no haya otro. El más corto no sirve: CCZ no es Comcast común.
+  for (const t of await listaTickers()) {
+    const prev = porCik.get(t.cik);
+    if (!prev || (prev.ticker.includes("-") && !t.ticker.includes("-"))) porCik.set(t.cik, t);
+  }
   const ciks = new Set([...acciones.keys(), ...flotante.keys()]);
   return [...ciks].flatMap(cik => {
     const t = porCik.get(cik);
@@ -121,48 +128,6 @@ export async function candidatasPorTamano(): Promise<Candidata[]> {
     const acc = acciones.get(cik), fl = flotante.get(cik);
     return [{ cik, ticker: t.ticker, nombre: t.nombre, acciones: acc ? acc / 1e6 : null, flotante: fl ? fl / 1e6 : null }];
   });
-}
-
-export interface Cotizacion { precio: number; fecha: string; fuente: string }
-
-/**
- * Último precio. Prueba Yahoo Finance y después Stooq (ninguno pide clave).
- * Es opcional: si ambos fallan devuelve null y el usuario ingresa el precio. PRECIOS=off lo desactiva.
- */
-export async function cotizacion(ticker: string): Promise<Cotizacion | null> {
-  if (process.env.PRECIOS === "off") return null;
-  return (await precioYahoo(ticker)) ?? (await precioStooq(ticker));
-}
-
-async function precioStooq(ticker: string): Promise<Cotizacion | null> {
-  const sym = ticker.toLowerCase().replace(/\./g, "-") + ".us";
-  try {
-    const res = await fetch(`https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
-    const [, fila] = (await res.text()).trim().split(/\r?\n/);
-    const cols = fila?.split(",") ?? [];
-    const cierre = Number(cols[6]);
-    return Number.isFinite(cierre) && cierre > 0 ? { precio: cierre, fecha: cols[1], fuente: "Stooq (cierre)" } : null;
-  } catch {
-    return null;
-  }
-}
-
-async function precioYahoo(ticker: string): Promise<Cotizacion | null> {
-  const sym = ticker.toUpperCase().replace(/\./g, "-");
-  try {
-    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, {
-      headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) return null;
-    const meta = ((await res.json()) as { chart?: { result?: { meta?: { regularMarketPrice?: number; regularMarketTime?: number } }[] } }).chart?.result?.[0]?.meta;
-    const p = meta?.regularMarketPrice;
-    if (!p || !(p > 0)) return null;
-    const fecha = meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10) : "";
-    return { precio: p, fecha, fuente: "Yahoo Finance" };
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -178,12 +143,13 @@ export async function empresaEdgar(ticker: string, precio?: number | Cotizacion)
   const precioManual = typeof precio === "number" ? precio : undefined;
   const cot = typeof precio === "object" ? precio : precioManual ? null : await cotizacion(info.ticker);
   const e = empresaDesdeEdgar(cf, sub, info.ticker, precioManual ?? cot?.precio ?? null);
+  if (!precioManual && !cot) e.fuente!.precioError = ultimoError || "Yahoo Finance no devolvió el precio";
   const ads = ACCIONES_POR_ADS[info.ticker];
   if (ads) {
     e.acciones /= ads;
     e.eps = e.eps.map(v => v * ads);
     e.fuente!.avisos = [...(e.fuente!.avisos ?? []), `Cotiza como ADS (1 ADS = ${ads} acciones): acciones y EPS convertidas a ADS.`];
   }
-  e.fuente = { ...e.fuente!, precioFuente: precioManual ? "ingresado a mano" : cot?.fuente, precioFecha: cot?.fecha };
+  e.fuente = { ...e.fuente!, precioFuente: precioManual ? "ingresado a mano" : cot?.fuente, precioFecha: cot?.fecha, variacionDia: cot?.variacion };
   return e;
 }

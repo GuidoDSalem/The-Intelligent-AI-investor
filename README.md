@@ -23,9 +23,11 @@ SEC_USER_AGENT="Tu Nombre tu@email.com" npm start
 ```
 
 - **Analizar un ticker**: escribilo arriba (KO, JNJ, NUE…). El servidor baja los 10-K de EDGAR, arma los últimos
-  10 ejercicios y busca el precio de cierre en Stooq o Yahoo Finance. Si no consigue el precio, te lo pide.
+  10 ejercicios y busca el precio en Yahoo Finance. Si no consigue el precio, te dice por qué y te lo pide.
 - **Cargar a mano**: cualquier empresa (por ejemplo, una que cotiza en BYMA), con un formulario o pegando JSON.
   Usá montos en millones y en moneda constante (balances ajustados por inflación).
+- **Mapa del mercado**: las ~500 mayores empresas de EE. UU. agrupadas por sector, con tamaño según capitalización
+  y color según la variación del día (en vivo con el servidor). Tocá cualquiera para analizarla.
 - **Editar datos**: desde la ficha podés corregir el precio o cualquier dato traído de EDGAR; queda marcado.
 
 Variables de entorno:
@@ -34,7 +36,7 @@ Variables de entorno:
 |---|---|
 | `SEC_USER_AGENT` | Obligatoria para EDGAR. La SEC exige identificarse con nombre y email ([reglas](https://www.sec.gov/os/accessing-edgar-data)). |
 | `ANTHROPIC_API_KEY` | Habilita el Sistema 2 en el servidor local (modelo `claude-opus-5-5`, con respaldo automático del lado del servidor si un pedido es rechazado). Se puede cambiar con `MODELO_S2`. |
-| `PRECIOS=off` | No consultar precios a Stooq ni a Yahoo Finance. |
+| `PRECIOS=off` | No consultar precios a Yahoo Finance. |
 | `PORT` | Puerto (5173 por defecto). |
 
 Tus empresas y las respuestas del Sistema 2 se guardan en el navegador (localStorage).
@@ -46,9 +48,8 @@ Claude. Ahí el Sistema 2 usa la cuenta de Claude de quien la mira. Esa página 
 navegador bloquea otros dominios y la SEC no permite CORS), así que lleva embebido un snapshot:
 
 ```bash
-SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot              # las 100 mayores; la página muestra las 10 primeras
-SEC_USER_AGENT="…" npm run snapshot -- --top 15 --incluir 200         # mostrar 15, guardar 200 para buscar
-SEC_USER_AGENT="…" npm run snapshot -- --precios precios.json         # precios a mano: {"NVDA": 180.2, …}
+SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot              # mapa de las 500 mayores, 10 destacadas (~15 min)
+SEC_USER_AGENT="…" npm run snapshot -- --mapa 300 --top 15            # otro tamaño
 SEC_USER_AGENT="…" npm run snapshot -- KO JNJ NUE=72.5 --agregar      # tickers puntuales, precio con TICKER=precio
 npm run build
 ```
@@ -78,11 +79,15 @@ servidor local o la carga manual.
 
 Cada ficha muestra la fuente (CIK, 10-K, fechas) y los avisos de la extracción.
 
+**Precios**: Yahoo Finance, con el endpoint que cotiza 20 símbolos por llamada (menos pedidos, menos bloqueos por
+exceso de pedidos) y un reintento ante 429. Stooq dejó de publicar su CSV de cotizaciones.
+
 **Limitaciones**
 
 - Sólo empresas que reportan en us-gaap (10-K). Las extranjeras con 20-F/40-F (IFRS) se cargan a mano.
-- Empresas que informan la ganancia por clase de acción (Visa, Berkshire Hathaway) o cuyos 10-K no traen XBRL
-  anual (Exxon Mobil) no se pueden leer automáticamente; el motor lo explica y se cargan a mano.
+- Empresas que informan la ganancia por clase de acción (Visa, Berkshire Hathaway) o que todavía no presentaron un
+  10-K con su estructura actual (ExxonMobil Holdings, 2026) no se pueden leer automáticamente: aparecen rayadas en
+  el mapa, con el motivo, y se cargan a mano. Las emisoras extranjeras (20-F/40-F) quedan fuera del mapa.
 - El motor verifica que EPS × acciones dé la ganancia neta; si no cierra, no inventa el dato.
 - XBRL existe desde 2009-2011: el criterio de 20 años de dividendos se da por cumplido si pagó en todos los años
   con datos (como mínimo 10), y la ficha lo aclara.

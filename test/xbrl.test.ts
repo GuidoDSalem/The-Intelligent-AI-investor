@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anioFiscal, empresaDesdeEdgar, ErrorEdgar } from "../src/edgar/xbrl.ts";
+import { anioFiscal, empresaDesdeEdgar, ErrorEdgar, ingresosRecientes, sectorPorSic } from "../src/edgar/xbrl.ts";
 import { ANIOS, EPS_REAL, facts, SUB } from "./fixtures/edgar.ts";
 import { analizar } from "../src/engine/analisis.ts";
 
@@ -36,7 +36,7 @@ describe("empresaDesdeEdgar", () => {
   it("clasifica por SIC y arma el nombre", () => {
     expect(e.ticker).toBe("TBC");
     expect(e.nombre).toBe("Test Bebidas Co");
-    expect(e.sector.startsWith("Industria")).toBe(true);
+    expect(e.sector.startsWith("Consumo básico")).toBe(true);
     expect(e.banco).toBe(false);
   });
 
@@ -132,5 +132,29 @@ describe("casos vistos en datos reales", () => {
     expect(e.acciones).toBe(1520);
     expect(e.eps.at(-1)).toBeCloseTo(1.9 / 4);
     expect(e.fuente?.avisos?.some(a => a.includes("posterior al último 10-K"))).toBe(true);
+  });
+
+  it("clasifica en sectores tipo GICS", () => {
+    expect(sectorPorSic(3674)).toBe("Tecnología");
+    expect(sectorPorSic(2834)).toBe("Salud");
+    expect(sectorPorSic(5961)).toBe("Consumo discrecional");
+    expect(sectorPorSic(5331)).toBe("Consumo básico");
+    expect(sectorPorSic(6021)).toBe("Finanzas");
+    expect(sectorPorSic(6798)).toBe("Inmobiliario");
+    expect(sectorPorSic(7389, "V")).toBe("Finanzas");
+  });
+
+  it("distingue emisoras extranjeras y entidades sin 10-K", () => {
+    const f = (form: string[]) => ({ ...SUB, filings: { recent: { form } } });
+    expect(() => empresaDesdeEdgar(facts(), f(["20-F", "6-K"]), "TM", 1)).toThrow(/extranjera/);
+    expect(() => empresaDesdeEdgar(facts(), f(["10-Q", "8-K"]), "XOM", 1)).toThrow(/todavía no presentó un 10-K/);
+    expect(empresaDesdeEdgar(facts(), f(["10-K", "10-Q"]), "TBC", 30).ticker).toBe("TBC");
+  });
+
+  it("estima los ingresos anuales recientes, también desde un 10-Q", () => {
+    const cf = facts();
+    expect(ingresosRecientes(cf)).toBeCloseTo(1900);
+    cf.facts["us-gaap"].Revenues.units.USD.push({ start: "2024-01-01", end: "2024-03-31", val: 600e6, accn: "q1", form: "10-Q", filed: "2024-04-30" });
+    expect(ingresosRecientes(cf)).toBeCloseTo(2400);
   });
 });

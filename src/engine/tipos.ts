@@ -46,6 +46,10 @@ export interface Fuente {
   url?: string;
   precioFuente?: string;
   precioFecha?: string;
+  /** Por qué no se pudo obtener el precio automáticamente. */
+  precioError?: string;
+  /** Variación del día en % al momento de la cotización. */
+  variacionDia?: number;
   moneda?: string;
   /** Advertencias de la extracción (datos faltantes, ajustes por split, etc.). */
   avisos?: string[];

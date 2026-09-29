@@ -1,6 +1,8 @@
 /* Layout: una hoja de "certificado de acciones" — encabezado con roseta guilloché,
    tira del pipeline en tres capas, grilla/filas de emisoras, ficha lateral con el análisis. */
 :root {
+  /* Mapa del mercado: objeto oscuro en ambos temas, como una pizarra de cotizaciones. */
+  --map-bg: #1A2220; --map-neu: #3D4845; --map-pos: #2E9E5B; --map-neg: #C23F37; --map-txt: #F3F6F4; --map-sector: #A9B6B0;
   --paper: #EDF1EC;
   --card: #F8FAF7;
   --ink: #15201B;
@@ -245,3 +247,20 @@ table.checks td.v { font-family: var(--f-mono); white-space: nowrap; text-align:
 #loader textarea { width: 100%; min-height: 160px; font: 12px/1.5 var(--f-mono); background: var(--card); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; resize: vertical; margin-top: 8px; }
 #loader .err { color: var(--bad); font-size: 13px; min-height: 1.2em; margin: 0; }
 #loader .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* Mapa del mercado */
+.mapa-sec { padding-block: 26px 6px; display: grid; gap: 10px; }
+.mapa-cab { display: flex; justify-content: space-between; align-items: end; gap: 12px; flex-wrap: wrap; }
+.mapa-cab h2 { margin: 0; font: 600 24px/1.1 var(--f-display); }
+.mapa-cab p { margin: 4px 0 0; }
+.mapa-ley { display: inline-flex; align-items: center; gap: 8px; font: 11.5px var(--f-mono); color: var(--ink-3); }
+.mapa-ley i { width: 120px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--map-neg), var(--map-neu), var(--map-pos)); }
+.mapa { position: relative; width: 100%; background: var(--map-bg); border-radius: var(--r); overflow: hidden; }
+.mapa .sector { position: absolute; box-sizing: border-box; border: 1px solid var(--map-bg); }
+.mapa .sector > span { position: absolute; left: 4px; top: 1px; right: 4px; font: 600 10.5px/16px var(--f-body); letter-spacing: .06em; text-transform: uppercase; color: var(--map-sector); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile { position: absolute; box-sizing: border-box; border: 1px solid var(--map-bg); padding: 0; margin: 0; cursor: pointer; color: var(--map-txt);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; text-align: center; line-height: 1.05; font-family: var(--f-body); }
+.tile:hover, .tile:focus-visible { outline: 2px solid var(--map-txt); outline-offset: -2px; z-index: 2; }
+.tile b { font-weight: 700; letter-spacing: .01em; }
+.tile small { font-family: var(--f-mono); opacity: .92; margin-top: 2px; }
+.tile.no { background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgb(0 0 0 / .22) 6px 8px); }
