@@ -1,0 +1,27 @@
+{
+  "name": "the-intelligent-ai-investor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Motor de análisis de acciones al estilo de Benjamin Graham, con datos de SEC EDGAR.",
+  "type": "module",
+  "scripts": {
+    "build": "tsx scripts/construir.ts",
+    "start": "npm run build && tsx src/server/servidor.ts",
+    "snapshot": "tsx scripts/snapshot.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

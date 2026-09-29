@@ -1,0 +1,85 @@
+<header class="wrap top">
+  <svg class="rosette-bg" viewBox="-50 -50 100 100" aria-hidden="true"><path id="bgRosette" fill="none" stroke="currentColor" stroke-width=".25"></path></svg>
+  <div class="eyebrow">Análisis sistemático de acciones · método Graham</div>
+  <h1>Motor Graham</h1>
+  <p class="lede">Cada empresa pasa por tres capas. El código fijo calcula lo que no cambia; el Sistema 1 decide rápido con simulaciones y señales ponderadas; el Sistema 2 razona sólo los casos que las otras dos capas no pueden cerrar con confianza.</p>
+
+  <section class="buscador" aria-label="Analizar una empresa">
+    <form id="buscarForm" autocomplete="off">
+      <input id="q" class="campo" type="text" placeholder="Ticker de EE. UU. (ej. KO, JNJ, NUE)" aria-label="Ticker" list="qLista" maxlength="12">
+      <datalist id="qLista"></datalist>
+      <input id="qPrecio" class="campo" type="number" step="0.01" min="0" placeholder="Precio" aria-label="Precio por acción">
+      <button class="btn" id="qIr" type="submit">Analizar</button>
+      <button class="btn ghost" id="openLoader" type="button">Cargar a mano</button>
+    </form>
+    <div class="estado" id="estado"></div>
+    <p class="msg" id="qMsg" role="status"></p>
+  </section>
+
+  <div class="pipeline" id="pipeline"></div>
+</header>
+
+<div class="wrap">
+  <div class="toolbar">
+    <div class="chips" id="chips" role="group" aria-label="Filtrar por conclusión"></div>
+    <div class="tools">
+      <label class="toggle" for="verEjemplos"><input type="checkbox" id="verEjemplos"> Ejemplos ficticios</label>
+      <label class="muted" for="sort">Ordenar</label>
+      <select id="sort" class="select">
+        <option value="margen">Precio vs. valor</option>
+        <option value="calidad">Calidad del negocio</option>
+        <option value="nombre">Nombre</option>
+      </select>
+      <div class="seg" role="group" aria-label="Vista">
+        <button id="vGrid" type="button" aria-pressed="true">Grilla</button>
+        <button id="vRows" type="button" aria-pressed="false">Filas</button>
+      </div>
+    </div>
+  </div>
+  <main id="list" class="grid"></main>
+</div>
+
+<footer class="wrap" id="foot"></footer>
+
+<dialog id="detail" aria-label="Análisis de la empresa"><div class="sheet" id="sheet"></div></dialog>
+
+<dialog id="loader" aria-labelledby="loaderTitle">
+  <form class="sheet" id="loaderForm" novalidate>
+    <h2 id="loaderTitle">Cargar empresa a mano</h2>
+    <p class="muted" style="margin:0">Montos en millones y en moneda constante (en Argentina, balances ajustados por inflación). Acciones en millones. La ganancia por acción va año por año, del más viejo al más nuevo.</p>
+    <fieldset><legend>Empresa</legend>
+      <label>Ticker<input class="campo" name="ticker" required maxlength="12"></label>
+      <label>Nombre<input class="campo" name="nombre" required></label>
+      <label>Sector<input class="campo" name="sector" required></label>
+      <label>Precio por acción<input class="campo num" name="precio" type="number" step="any" required></label>
+      <label>Acciones (millones)<input class="campo num" name="acciones" type="number" step="any" required></label>
+      <label>Años seguidos con dividendos<input class="campo num" name="aniosDividendos" type="number" step="1" min="0" required></label>
+      <label class="full">Ganancia por acción, un valor por año, separados por espacio o punto y coma<input class="campo num" name="eps" required placeholder="1,20; 1,31; 1,25; 1,40; 1,52; 1,55; 1,61; 1,70; 1,82; 1,90"></label>
+      <label class="check"><input type="checkbox" name="banco"> Financiera (banco, aseguradora)</label>
+      <label class="check"><input type="checkbox" name="ciclica"> Cíclica</label>
+    </fieldset>
+    <fieldset><legend>Último ejercicio (millones)</legend>
+      <label>Ventas<input class="campo num" name="ventas" type="number" step="any" required></label>
+      <label>Patrimonio neto<input class="campo num" name="patrimonio" type="number" step="any" required></label>
+      <label>Activo corriente<input class="campo num" name="activoCorriente" type="number" step="any"></label>
+      <label>Pasivo corriente<input class="campo num" name="pasivoCorriente" type="number" step="any"></label>
+      <label>Caja<input class="campo num" name="caja" type="number" step="any"></label>
+      <label>Deuda total<input class="campo num" name="deudaTotal" type="number" step="any"></label>
+      <label>Deuda de largo plazo<input class="campo num" name="deudaLP" type="number" step="any"></label>
+      <label>Resultado operativo (EBIT)<input class="campo num" name="ebit" type="number" step="any"></label>
+      <label>Depreciaciones<input class="campo num" name="depreciaciones" type="number" step="any"></label>
+      <label>Intereses pagados<input class="campo num" name="intereses" type="number" step="any"></label>
+      <label>Flujo operativo<input class="campo num" name="flujoOperativo" type="number" step="any"></label>
+      <label>Inversiones en bienes de uso (capex)<input class="campo num" name="capex" type="number" step="any"></label>
+    </fieldset>
+    <details><summary>Pegar o copiar como JSON</summary>
+      <textarea id="jsonIn" spellcheck="false" aria-label="Datos en JSON"></textarea>
+      <div class="actions" style="justify-content:flex-start;margin-top:6px"><button type="button" class="btn ghost" id="jsonAplicar">Completar el formulario con este JSON</button></div>
+    </details>
+    <p class="err" id="formErr" role="alert"></p>
+    <div class="actions">
+      <button type="button" class="btn ghost" id="cancelLoader">Cancelar</button>
+      <button type="submit" class="btn">Analizar y guardar</button>
+    </div>
+  </form>
+</dialog>
