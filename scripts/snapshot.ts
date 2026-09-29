@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { candidatasPorTamano, cotizacion, empresaEdgar } from "../src/edgar/cliente.ts";
+import { candidatasPorTamano, type Cotizacion, cotizacion, empresaEdgar } from "../src/edgar/cliente.ts";
 import type { Empresa } from "../src/engine/tipos.ts";
 
 /**
@@ -29,7 +29,7 @@ const previo = agregar && existsSync("data/snapshot.json") ? JSON.parse(await re
 const fallidas: string[] = [];
 const cap = (e: Empresa) => e.precio * e.acciones;
 
-async function bajar(ticker: string, precio?: number): Promise<Empresa | null> {
+async function bajar(ticker: string, precio?: number | Cotizacion): Promise<Empresa | null> {
   try {
     const e = await empresaEdgar(ticker, precio);
     if (!(e.precio > 0)) { fallidas.push(`${ticker}: sin precio (pasalo como ${ticker}=precio o en --precios)`); return null; }
@@ -62,11 +62,13 @@ if (pedidos.length) {
   console.log(`${cands.length} empresas con datos de portada; consulto precios de ${preseleccion.length}…`);
 
   // 2. Capitalización preliminar = acciones de portada × precio (el public float es viejo y a veces está mal escalado).
-  const prelim: { ticker: string; precio?: number; valor: number }[] = [];
+  const prelim: { ticker: string; cot?: number | Cotizacion; valor: number }[] = [];
   for (const c of preseleccion) {
-    const cot = precios[c.ticker] ? { precio: precios[c.ticker] } : await cotizacion(c.ticker);
-    const valor = cot && c.acciones ? cot.precio * c.acciones : c.flotante ?? 0;
-    prelim.push({ ticker: c.ticker, precio: cot?.precio, valor });
+    const manual = precios[c.ticker] as number | undefined;
+    const cot: number | Cotizacion | null = manual ?? await cotizacion(c.ticker);
+    const p = typeof cot === "number" ? cot : cot?.precio;
+    const valor = p && c.acciones ? p * c.acciones : c.flotante ?? 0;
+    prelim.push({ ticker: c.ticker, cot: cot ?? undefined, valor });
   }
   prelim.sort((a, b) => b.valor - a.valor);
 
@@ -74,7 +76,7 @@ if (pedidos.length) {
   //    (acciones del 10-K × precio) se descartan las que se colaron por datos de portada mal escalados.
   for (const c of prelim) {
     if (empresas.length >= incluir + 20) break;
-    const e = await bajar(c.ticker, c.precio);
+    const e = await bajar(c.ticker, c.cot);
     if (e) empresas.push(e);
   }
   empresas = empresas.sort((a, b) => cap(b) - cap(a)).slice(0, incluir);

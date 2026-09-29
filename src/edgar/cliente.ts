@@ -165,11 +165,25 @@ async function precioYahoo(ticker: string): Promise<Cotizacion | null> {
   }
 }
 
+/**
+ * Empresas que presentan 10-K pero cotizan en EE. UU. como ADS (certificados que representan varias acciones):
+ * EDGAR informa acciones ordinarias y el precio es por ADS, así que se convierte todo a ADS.
+ */
+export const ACCIONES_POR_ADS: Record<string, number> = { ONC: 13 };
+
 /** Empresa lista para el motor. Si no hay precio, `precio` queda en 0 y la interfaz lo pide. */
-export async function empresaEdgar(ticker: string, precioManual?: number): Promise<Empresa> {
+/** `precio`: un número es un precio ingresado a mano; una `Cotizacion` es una ya consultada (se conserva su fuente). */
+export async function empresaEdgar(ticker: string, precio?: number | Cotizacion): Promise<Empresa> {
   const { info, cf, sub } = await datosCrudos(ticker);
-  const cot = precioManual ? null : await cotizacion(info.ticker);
+  const precioManual = typeof precio === "number" ? precio : undefined;
+  const cot = typeof precio === "object" ? precio : precioManual ? null : await cotizacion(info.ticker);
   const e = empresaDesdeEdgar(cf, sub, info.ticker, precioManual ?? cot?.precio ?? null);
+  const ads = ACCIONES_POR_ADS[info.ticker];
+  if (ads) {
+    e.acciones /= ads;
+    e.eps = e.eps.map(v => v * ads);
+    e.fuente!.avisos = [...(e.fuente!.avisos ?? []), `Cotiza como ADS (1 ADS = ${ads} acciones): acciones y EPS convertidas a ADS.`];
+  }
   e.fuente = { ...e.fuente!, precioFuente: precioManual ? "ingresado a mano" : cot?.fuente, precioFecha: cot?.fecha };
   return e;
 }
