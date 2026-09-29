@@ -23,7 +23,7 @@ SEC_USER_AGENT="Tu Nombre tu@email.com" npm start
 ```
 
 - **Analizar un ticker**: escribilo arriba (KO, JNJ, NUE…). El servidor baja los 10-K de EDGAR, arma los últimos
-  10 ejercicios y busca el precio de cierre en Stooq. Si no consigue el precio, te lo pide.
+  10 ejercicios y busca el precio de cierre en Stooq o Yahoo Finance. Si no consigue el precio, te lo pide.
 - **Cargar a mano**: cualquier empresa (por ejemplo, una que cotiza en BYMA), con un formulario o pegando JSON.
   Usá montos en millones y en moneda constante (balances ajustados por inflación).
 - **Editar datos**: desde la ficha podés corregir el precio o cualquier dato traído de EDGAR; queda marcado.
@@ -34,7 +34,7 @@ Variables de entorno:
 |---|---|
 | `SEC_USER_AGENT` | Obligatoria para EDGAR. La SEC exige identificarse con nombre y email ([reglas](https://www.sec.gov/os/accessing-edgar-data)). |
 | `ANTHROPIC_API_KEY` | Habilita el Sistema 2 en el servidor local (modelo `claude-opus-5-5`, con respaldo automático del lado del servidor si un pedido es rechazado). Se puede cambiar con `MODELO_S2`. |
-| `PRECIOS=off` | No consultar precios a Stooq. |
+| `PRECIOS=off` | No consultar precios a Stooq ni a Yahoo Finance. |
 | `PORT` | Puerto (5173 por defecto). |
 
 Tus empresas y las respuestas del Sistema 2 se guardan en el navegador (localStorage).
@@ -46,8 +46,10 @@ Claude. Ahí el Sistema 2 usa la cuenta de Claude de quien la mira. Esa página 
 navegador bloquea otros dominios y la SEC no permite CORS), así que lleva embebido un snapshot:
 
 ```bash
-SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot              # lista por defecto (20 empresas)
-SEC_USER_AGENT="…" npm run snapshot -- KO JNJ NUE=72.5 --agregar      # precio a mano con TICKER=precio
+SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot              # las 10 mayores del S&P 500 por capitalización
+SEC_USER_AGENT="…" npm run snapshot -- --top 15                       # las 15 mayores
+SEC_USER_AGENT="…" npm run snapshot -- --precios precios.json         # precios a mano: {"NVDA": 180.2, …}
+SEC_USER_AGENT="…" npm run snapshot -- KO JNJ NUE=72.5 --agregar      # tickers puntuales, precio con TICKER=precio
 npm run build
 ```
 
@@ -59,7 +61,11 @@ npm run build
 - EPS diluido de los últimos 10 ejercicios, **ajustado por splits**: si un período aparece re-expresado con una
   razón de split (2:1, 3:1…), se corrigen los años que no volvieron a presentarse.
 - Las etiquetas cambian con los años (p. ej. `SalesRevenueNet` → `Revenues`); se combinan en orden de preferencia.
-- Acciones en circulación de la portada del último formulario, sumando clases.
+- Acciones en circulación de la portada del último formulario (sumando clases) si es reciente y consistente; si
+  no, el promedio diluido del ejercicio.
+- Deuda: largo plazo + corriente, o la deuda combinada cuando no se informan por separado. D&A suma la
+  amortización de intangibles cuando la depreciación viene sola. Si falta el capex, el flujo libre queda sin dato.
+- Ejercicios de 52/53 semanas que cierran a principios de enero se rotulan con el año anterior.
 - Dividendos: años seguidos con pago, hacia atrás.
 - Sector y tipo (financiera, cíclica) según el código SIC.
 
@@ -68,6 +74,9 @@ Cada ficha muestra la fuente (CIK, 10-K, fechas) y los avisos de la extracción.
 **Limitaciones**
 
 - Sólo empresas que reportan en us-gaap (10-K). Las extranjeras con 20-F/40-F (IFRS) se cargan a mano.
+- Empresas que informan la ganancia por clase de acción (Visa, Berkshire Hathaway) o cuyos 10-K no traen XBRL
+  anual (Exxon Mobil) no se pueden leer automáticamente; el motor lo explica y se cargan a mano.
+- El motor verifica que EPS × acciones dé la ganancia neta; si no cierra, no inventa el dato.
 - XBRL existe desde 2009-2011: el criterio de 20 años de dividendos se da por cumplido si pagó en todos los años
   con datos (como mínimo 10), y la ficha lo aclara.
 - Algunos datos pueden faltar o venir con etiquetas poco comunes; el motor avisa qué supuso.

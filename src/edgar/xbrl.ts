@@ -35,6 +35,8 @@ export interface Submissions {
 
 const esAnual = (form: string) => /^(10-K|10-KT)(\/A)?$/.test(form);
 const dias = (a: string, b: string) => (Date.parse(b) - Date.parse(a)) / 86400000;
+/** Año del ejercicio: los de 52/53 semanas pueden cerrar los primeros días de enero (J&J cerró el 1/1/2017 su 2016). */
+export const anioFiscal = (cierre: string) => new Date(Date.parse(cierre) - 7 * 86400000).getUTCFullYear();
 
 /** Hechos de varias etiquetas, en orden de preferencia: por período gana la primera etiqueta que lo tenga. */
 function hechos(cf: CompanyFacts, etiquetas: string[], unidad = "USD", taxonomia = "us-gaap"): Hecho[] {
@@ -148,16 +150,19 @@ const ETIQ = {
   pasivoCorriente: ["LiabilitiesCurrent"],
   caja: ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "Cash"],
   deudaLP: ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermDebtAndFinanceLeaseLiabilitiesNoncurrent"],
-  deudaLPTotal: ["LongTermDebt"],
+  deudaLPTotal: ["LongTermDebt", "LongTermNotesPayable", "LongTermNotesAndLoans"],
+  deudaTotal: ["DebtLongtermAndShorttermCombinedAmount"],
   deudaCorriente: ["DebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent"],
   deudaLPCorriente: ["LongTermDebtCurrent"],
   cortoPlazo: ["ShortTermBorrowings", "CommercialPaper"],
   ebit: ["OperatingIncomeLoss"],
   resultadoAntesImpuestos: ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
-  depreciaciones: ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet", "DepreciationAndAmortization", "Depreciation"],
+  depreciaciones: ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet", "DepreciationAndAmortization"],
+  depreciacion: ["Depreciation"],
+  amortizacion: ["AmortizationOfIntangibleAssets"],
   intereses: ["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt", "InterestPaidNet"],
   flujoOperativo: ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
-  capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsForCapitalImprovements"],
+  capex: ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsToAcquireOtherPropertyPlantAndEquipment", "PaymentsForCapitalImprovements"],
   dividendosPA: ["CommonStockDividendsPerShareDeclared", "CommonStockDividendsPerShareCashPaid"],
   dividendosPagados: ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
   accionesPromedio: ["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"],
@@ -175,10 +180,16 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
 
   // EPS por ejercicio, ajustado por splits
   const epsH = hechos(cf, ETIQ.eps, "USD/shares");
-  if (!epsH.length) throw new ErrorEdgar("No encontré la ganancia por acción anual en los 10-K de esta empresa.");
+  const CLASES = "Puede que reporte la ganancia por clase de acción (como Visa o Berkshire Hathaway): cargala a mano.";
+  if (!epsH.length) {
+    const soloTrimestral = ETIQ.eps.some(et => cf.facts["us-gaap"]?.[et]?.units?.["USD/shares"]?.length);
+    throw new ErrorEdgar(soloTrimestral
+      ? "EDGAR sólo tiene datos estructurados trimestrales (10-Q) de esta empresa: sus 10-K no traen XBRL anual. Cargala a mano."
+      : `No encontré la ganancia por acción anual en los 10-K de esta empresa. ${CLASES}`);
+  }
   const { porCierre, splits } = epsAjustado(epsH);
   const cierres = [...porCierre.keys()].sort().slice(-maxAnios);
-  if (cierres.length < 4) throw new ErrorEdgar(`Hay sólo ${cierres.length} ejercicios con datos en EDGAR; el motor necesita al menos 4.`);
+  if (cierres.length < 4) throw new ErrorEdgar(`Hay sólo ${cierres.length} ejercicios con ganancia por acción en EDGAR; el motor necesita al menos 4.${cierres.length === 0 ? " " + CLASES : ""}`);
   const eps = cierres.map(k => porCierre.get(k)!);
   const cierre = cierres.at(-1)!;
   for (const s of splits) avisos.push(`EPS ajustado por un split ${s.factor >= 1 ? `${s.factor}:1` : `1:${Math.round(1 / s.factor)}`} (re-expresado en un 10-K presentado el ${s.desde}).`);
@@ -199,8 +210,10 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
     if (total !== null) deudaLP = total - (corr ?? 0);
   }
   const corriente = M(inst(ETIQ.deudaCorriente)) ?? ((M(inst(ETIQ.deudaLPCorriente)) ?? 0) + (M(inst(["ShortTermBorrowings"])) ?? 0) + (M(inst(["CommercialPaper"])) ?? 0));
+  const combinada = M(inst(ETIQ.deudaTotal));
+  if (deudaLP === null && combinada !== null) deudaLP = combinada - corriente;
   if (deudaLP === null) { deudaLP = 0; avisos.push("No hay deuda de largo plazo informada: se tomó como cero."); }
-  const deudaTotal = deudaLP + corriente;
+  const deudaTotal = combinada ?? deudaLP + corriente;
 
   let ebit = M(anual(ETIQ.ebit));
   let intereses = M(anual(ETIQ.intereses));
@@ -210,24 +223,33 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
   }
   if (intereses === null && deudaTotal > 0) avisos.push("No encontré los intereses pagados: la cobertura de intereses queda sin dato.");
   let depreciaciones = M(anual(ETIQ.depreciaciones));
+  if (depreciaciones === null) {
+    const dep = M(anual(ETIQ.depreciacion)), amort = M(anual(ETIQ.amortizacion));
+    if (dep !== null || amort !== null) depreciaciones = (dep ?? 0) + (amort ?? 0);
+  }
   if (depreciaciones === null) avisos.push("No encontré depreciaciones: el EBITDA se aproxima con el EBIT.");
 
   const flujoOperativo = M(anual(ETIQ.flujoOperativo));
-  const capex = M(anual(ETIQ.capex)) ?? (flujoOperativo !== null ? 0 : null);
-  if (flujoOperativo !== null && !anual(ETIQ.capex)) avisos.push("No encontré inversiones en bienes de uso (capex): se tomaron como cero.");
+  const capex = M(anual(ETIQ.capex));
+  if (flujoOperativo !== null && capex === null) avisos.push("No encontré inversiones en bienes de uso (capex): el flujo de caja libre queda sin dato.");
 
-  // Acciones en circulación: portada del último formulario (dei), sumando clases; si no, promedio diluido
+  // Acciones en circulación: portada del último formulario (dei), sumando clases, si es reciente y cierra con
+  // EPS × acciones ≈ ganancia neta; si no, el promedio diluido del ejercicio.
+  const gn = M(anual(ETIQ.gananciaNeta));
+  const cierra = (acc: number) => !gn || Math.abs(eps.at(-1)! * acc - gn) / Math.abs(gn) <= 0.3;
   let acciones: number | null = null;
   const dei = cf.facts.dei?.EntityCommonStockSharesOutstanding?.units?.shares;
   if (dei?.length) {
     const ultimaFecha = dei.reduce((m, h) => (h.end > m ? h.end : m), "");
     const ultimos = dei.filter(h => h.end === ultimaFecha);
     const accn = ultimos.reduce((m, h) => (h.filed > m.filed ? h : m)).accn;
-    acciones = ultimos.filter(h => h.accn === accn).reduce((s, h) => s + h.val, 0) / 1e6;
+    const portada = ultimos.filter(h => h.accn === accn).reduce((s, h) => s + h.val, 0) / 1e6;
+    if (dias(cierre, ultimaFecha) > -60 && cierra(portada)) acciones = portada;
   }
   if (!acciones) {
-    const prom = anual(ETIQ.accionesPromedio, "shares");
-    if (prom) { acciones = prom.val / 1e6; avisos.push("Acciones: se usó el promedio diluido del ejercicio (no hay dato de portada)."); }
+    const prom = M(anual(ETIQ.accionesPromedio, "shares"));
+    if (prom && cierra(prom)) { acciones = prom; avisos.push("Acciones: se usó el promedio diluido del ejercicio (no hay dato de portada reciente)."); }
+    else if (prom || dei?.length) throw new ErrorEdgar(`La ganancia por acción por las acciones informadas no da la ganancia neta${gn ? ` (${Math.round(gn)} M)` : ""}: la empresa reporta por clase de acción. ${CLASES}`);
   }
   if (!acciones) throw new ErrorEdgar("No encontré la cantidad de acciones en circulación.");
 
@@ -235,9 +257,9 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
   const divPA = anuales(hechos(cf, ETIQ.dividendosPA, "USD/shares"));
   const divPag = anuales(hechos(cf, ETIQ.dividendosPagados));
   const todosCierres = [...anuales(hechos(cf, ETIQ.gananciaNeta)).keys(), ...porCierre.keys()];
-  const aniosCon = [...new Set(todosCierres.map(k => k.slice(0, 4)))].sort().reverse();
-  const pagoEn = (anio: string) =>
-    [...divPA.entries(), ...divPag.entries()].some(([k, h]) => k.startsWith(anio) && h.val > 0);
+  const aniosCon = [...new Set(todosCierres.map(anioFiscal))].sort().reverse();
+  const pagoEn = (anio: number) =>
+    [...divPA.entries(), ...divPag.entries()].some(([k, h]) => anioFiscal(k) === anio && h.val > 0);
   let aniosDividendos = 0;
   for (const a of aniosCon) { if (pagoEn(a)) aniosDividendos++; else break; }
 
@@ -248,6 +270,8 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
   ].filter(([, v]) => v === null).map(([n]) => n);
   if (faltantes.length && !cls.financiera) avisos.push(`Sin dato en el 10-K: ${faltantes.join(", ")}.`);
 
+  const avisosFinales = cls.financiera ? avisos.filter(a => a.startsWith("EPS") || a.startsWith("Acciones")) : avisos;
+
   const cik = String(cf.cik).padStart(10, "0");
   const base: Empresa = {
     ticker: ticker.toUpperCase(),
@@ -256,7 +280,7 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
     precio: precio ?? 0,
     acciones,
     eps,
-    anios: cierres.map(k => Number(k.slice(0, 4))),
+    anios: cierres.map(anioFiscal),
     ventas: ventasH.val / 1e6,
     patrimonio: patrimonioH.val / 1e6,
     activoCorriente: cls.financiera ? null : M(inst(ETIQ.activoCorriente)),
@@ -281,7 +305,7 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
       presentado: ventasH.filed,
       url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=10-K`,
       moneda: "USD",
-      avisos,
+      avisos: avisosFinales,
     },
   };
   return base as Empresa & { precio: number };

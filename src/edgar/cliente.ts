@@ -76,12 +76,18 @@ export async function datosCrudos(ticker: string) {
   return { info, cf, sub };
 }
 
+export interface Cotizacion { precio: number; fecha: string; fuente: string }
+
 /**
- * Último precio de cierre desde Stooq (sin clave). Es opcional: si falla, se devuelve null
- * y el usuario ingresa el precio. Se puede desactivar con PRECIOS=off.
+ * Último precio de cierre. Prueba Stooq y después Yahoo Finance (ninguno pide clave).
+ * Es opcional: si ambos fallan devuelve null y el usuario ingresa el precio. PRECIOS=off lo desactiva.
  */
-export async function precioStooq(ticker: string): Promise<{ precio: number; fecha: string } | null> {
+export async function cotizacion(ticker: string): Promise<Cotizacion | null> {
   if (process.env.PRECIOS === "off") return null;
+  return (await precioStooq(ticker)) ?? (await precioYahoo(ticker));
+}
+
+async function precioStooq(ticker: string): Promise<Cotizacion | null> {
   const sym = ticker.toLowerCase().replace(/\./g, "-") + ".us";
   try {
     const res = await fetch(`https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`, { signal: AbortSignal.timeout(6000) });
@@ -89,7 +95,24 @@ export async function precioStooq(ticker: string): Promise<{ precio: number; fec
     const [, fila] = (await res.text()).trim().split(/\r?\n/);
     const cols = fila?.split(",") ?? [];
     const cierre = Number(cols[6]);
-    return Number.isFinite(cierre) && cierre > 0 ? { precio: cierre, fecha: cols[1] } : null;
+    return Number.isFinite(cierre) && cierre > 0 ? { precio: cierre, fecha: cols[1], fuente: "Stooq (cierre)" } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function precioYahoo(ticker: string): Promise<Cotizacion | null> {
+  const sym = ticker.toUpperCase().replace(/\./g, "-");
+  try {
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, {
+      headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return null;
+    const meta = ((await res.json()) as { chart?: { result?: { meta?: { regularMarketPrice?: number; regularMarketTime?: number } }[] } }).chart?.result?.[0]?.meta;
+    const p = meta?.regularMarketPrice;
+    if (!p || !(p > 0)) return null;
+    const fecha = meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10) : "";
+    return { precio: p, fecha, fuente: "Yahoo Finance" };
   } catch {
     return null;
   }
@@ -98,8 +121,8 @@ export async function precioStooq(ticker: string): Promise<{ precio: number; fec
 /** Empresa lista para el motor. Si no hay precio, `precio` queda en 0 y la interfaz lo pide. */
 export async function empresaEdgar(ticker: string, precioManual?: number): Promise<Empresa> {
   const { info, cf, sub } = await datosCrudos(ticker);
-  const cot = precioManual ? null : await precioStooq(info.ticker);
+  const cot = precioManual ? null : await cotizacion(info.ticker);
   const e = empresaDesdeEdgar(cf, sub, info.ticker, precioManual ?? cot?.precio ?? null);
-  e.fuente = { ...e.fuente!, precioFuente: precioManual ? "ingresado a mano" : cot ? "Stooq (cierre)" : undefined, precioFecha: cot?.fecha };
+  e.fuente = { ...e.fuente!, precioFuente: precioManual ? "ingresado a mano" : cot?.fuente, precioFecha: cot?.fecha };
   return e;
 }
