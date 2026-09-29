@@ -5,6 +5,7 @@ import { promptS2, type RespuestaS2, validarS2 } from "../engine/sistema2.ts";
 import { SUPUESTOS } from "../engine/supuestos.ts";
 import type { Empresa, VeredictoId } from "../engine/tipos.ts";
 import type { CeldaMapa, Snapshot } from "../engine/snapshot.ts";
+import { alternarAyuda, botonAyuda, panelAyuda } from "./ayudas.ts";
 import { epsChart, esc, logoSVG, mapaHTML, rangeBar, rosettePath, sparkSVG, valuationChart } from "./graficos.ts";
 
 /* ============================================================
@@ -168,7 +169,7 @@ function openDetail(id: string) {
   sheet.innerHTML = `
     <div class="sheet-head">${logoSVG(c)}<div><h2>${esc(c.nombre)}</h2><div class="meta"><b class="mono">${esc(c.ticker)}</b> · ${esc(c.sector)} · ${fmtPrecio(c.precio)} por acción · capitalización ${millones(d.capitalizacion)}</div></div>
       <button class="close" id="closeDetail" type="button" aria-label="Cerrar">×</button></div>
-    ${bloqueFuente(c)}
+    <div class="fuente-wrap">${botonAyuda("fuente")}${bloqueFuente(c)}</div>${panelAyuda("fuente", a)}
     <div class="acciones-ficha">
       ${c.fuente?.tipo !== "ejemplo" ? `<button class="btn ghost" type="button" id="editar">Editar datos</button>` : `<button class="btn ghost" type="button" id="editar">Copiar como plantilla</button>`}
       ${puedeActualizar ? `<button class="btn ghost" type="button" id="actualizar">Actualizar desde EDGAR</button>` : ""}
@@ -176,14 +177,15 @@ function openDetail(id: string) {
     </div>
 
     <div class="verdict-block">
-      <div class="row1"><span class="pill v-${v}">${VEREDICTOS[v].txt}</span>
+      <div class="row1">${botonAyuda("veredicto")}<span class="pill v-${v}">${VEREDICTOS[v].txt}</span>
         <span class="conf">Confianza <span class="meter"><i style="width:${(r2?.confianza ?? s1.confianza) * 100}%"></i></span>${pct(r2?.confianza ?? s1.confianza)}</span>
         <span class="muted">Decidió: ${r2 ? "Sistema 2" : "Sistema 1"}</span></div>
       <p class="big">${esc(r2?.resumen || VEREDICTOS[v].corto)}</p>
       <ul class="why">${a.porque.map(p => `<li>${p}</li>`).join("")}</ul>
+      ${panelAyuda("veredicto", a)}
     </div>
 
-    <section class="sec"><div class="sec-h"><h3>Precio frente a valor</h3><span class="layer-tag s1">Capa fija + Sistema 1</span></div>
+    <section class="sec"><div class="sec-h"><h3>Precio frente a valor ${botonAyuda("valor")}</h3><span class="layer-tag s1">Capa fija + Sistema 1</span></div>${panelAyuda("valor", a)}
       ${valuationChart(a)}
       <p class="note">Barras: distribución de ${SUPUESTOS.simulaciones.toLocaleString("es-AR")} valuaciones simuladas variando tasa, crecimiento y flujo base. Marcas: las valuaciones determinísticas.</p>
       <div class="tablewrap" style="margin-top:12px"><table class="checks"><thead><tr><th>Método</th><th>Cálculo</th><th style="text-align:right">Valor</th><th>vs. precio</th></tr></thead><tbody>
@@ -191,34 +193,35 @@ function openDetail(id: string) {
       </tbody></table></div>
     </section>
 
-    <section class="sec"><div class="sec-h"><h3>Criterios de Graham</h3><span class="layer-tag">Código determinístico</span></div>
+    <section class="sec"><div class="sec-h"><h3>Criterios de Graham ${botonAyuda("criterios")}</h3><span class="layer-tag">Código determinístico</span></div>${panelAyuda("criterios", a)}
       <div class="tablewrap"><table class="checks"><thead><tr><th>Criterio</th><th>Regla</th><th style="text-align:right">Valor</th><th>Pasa</th></tr></thead><tbody>${checks}</tbody></table></div>
     </section>
 
-    <section class="sec"><div class="sec-h"><h3>Ganancia por acción</h3><span class="layer-tag">Código determinístico</span></div>
+    <section class="sec"><div class="sec-h"><h3>Ganancia por acción ${botonAyuda("eps")}</h3><span class="layer-tag">Código determinístico</span></div>${panelAyuda("eps", a)}
       ${epsChart(a)}
       <p class="note">Crecimiento entre el promedio de los primeros y los últimos 3 años: ${f(d.crecimiento, P)} (${f(d.cagr, P)} anual). Variabilidad: ${Number.isFinite(d.cv) ? nf2.format(d.cv) : "muy alta"}.</p>
     </section>
 
     <section class="sec"><div class="sec-h"><h3>Ratios</h3><span class="layer-tag">Código determinístico</span></div>
       <div class="ratios">
-        <div><h4>Rentabilidad</h4><dl>${kv("ROE", f(d.roe, P))}${kv("Margen operativo", f(d.margenOperativo, P))}${kv("Margen neto", f(d.margenNeto, P))}${kv("Ganancia neta", millones(d.gananciaNeta))}</dl></div>
-        <div><h4>Solidez</h4><dl>${kv("Liquidez corriente", f(d.liquidez, x => nf2.format(x)))}${kv("Capital de trabajo", f(d.capitalTrabajo, millones))}${kv("Deuda neta / EBITDA", f(d.deudaNetaEbitda, X))}${kv("Cobertura de intereses", f(d.cobertura, X))}</dl></div>
-        <div><h4>Flujo de caja</h4><dl>${kv("Flujo de caja libre", f(d.fcf, millones))}${kv("FCF por acción", f(d.fcfpa, fmtPrecio))}${kv("Caja / ganancia", f(d.conversion, x => nf2.format(x)))}${kv("FCF yield", f(d.fcfYield, P))}</dl></div>
-        <div><h4>Valuación</h4><dl>${kv("P/E (prom. 3 años)", f(d.pe, x => nf1.format(x)))}${kv("P/B", f(d.pb, x => nf2.format(x)))}${kv("P/E × P/B", f(d.pe !== null && d.pb !== null ? d.pe * d.pb : null, x => nf1.format(x)))}${kv("EV / EBITDA", f(d.evEbitda, X))}</dl></div>
+        <div><h4>Rentabilidad ${botonAyuda("rentabilidad")}</h4><dl>${kv("ROE", f(d.roe, P))}${kv("Margen operativo", f(d.margenOperativo, P))}${kv("Margen neto", f(d.margenNeto, P))}${kv("Ganancia neta", millones(d.gananciaNeta))}</dl></div>
+        <div><h4>Solidez ${botonAyuda("solidez")}</h4><dl>${kv("Liquidez corriente", f(d.liquidez, x => nf2.format(x)))}${kv("Capital de trabajo", f(d.capitalTrabajo, millones))}${kv("Deuda neta / EBITDA", f(d.deudaNetaEbitda, X))}${kv("Cobertura de intereses", f(d.cobertura, X))}</dl></div>
+        <div><h4>Flujo de caja ${botonAyuda("caja")}</h4><dl>${kv("Flujo de caja libre", f(d.fcf, millones))}${kv("FCF por acción", f(d.fcfpa, fmtPrecio))}${kv("Caja / ganancia", f(d.conversion, x => nf2.format(x)))}${kv("FCF yield", f(d.fcfYield, P))}</dl></div>
+        <div><h4>Valuación ${botonAyuda("multiplos")}</h4><dl>${kv("P/E (prom. 3 años)", f(d.pe, x => nf1.format(x)))}${kv("P/B", f(d.pb, x => nf2.format(x)))}${kv("P/E × P/B", f(d.pe !== null && d.pb !== null ? d.pe * d.pb : null, x => nf1.format(x)))}${kv("EV / EBITDA", f(d.evEbitda, X))}</dl></div>
       </div>
+      ${panelAyuda("rentabilidad", a)}${panelAyuda("solidez", a)}${panelAyuda("caja", a)}${panelAyuda("multiplos", a)}
     </section>
 
-    <section class="sec"><div class="sec-h"><h3>Señales de calidad</h3><span class="layer-tag s1">Sistema 1</span></div>
+    <section class="sec"><div class="sec-h"><h3>Señales de calidad ${botonAyuda("senales")}</h3><span class="layer-tag s1">Sistema 1</span></div>${panelAyuda("senales", a)}
       <div class="signals">${sig}</div>
       <p class="note">Cada señal suma o resta al puntaje (log-odds). Calidad resultante: <b class="num">${pct(s1.calidad)}</b>. Probabilidad de valer más que el precio: <b class="num">${pct(s1.pSobre)}</b>; con margen de un tercio: <b class="num">${pct(s1.pMargen)}</b>.</p>
     </section>
 
-    <section class="sec"><div class="sec-h"><h3>Razonamiento puntual</h3><span class="layer-tag s2">Sistema 2</span></div>
+    <section class="sec"><div class="sec-h"><h3>Razonamiento puntual ${botonAyuda("sistema2")}</h3><span class="layer-tag s2">Sistema 2</span></div>${panelAyuda("sistema2", a)}
       <div class="s2box" id="s2box"></div>
     </section>
 
-    <section class="sec"><div class="sec-h"><h3>Traza del motor</h3><span class="layer-tag">Auditoría</span></div>
+    <section class="sec"><div class="sec-h"><h3>Traza del motor ${botonAyuda("traza")}</h3><span class="layer-tag">Auditoría</span></div>${panelAyuda("traza", a)}
       <div class="trace">
         <div class="t"><span>capa fija</span><span>${d.criterios.length} criterios, ${d.valuaciones.length} valuaciones, ${d.ciclica ? "cíclica → EPS normalizada" : d.banco ? "financiera → P/B justificado" : "flujo de caja libre como base"}</span><span>${nf2.format(a.tiempos.d)} ms</span></div>
         <div class="t"><span>sistema 1</span><span>${SUPUESTOS.simulaciones} simulaciones, semilla ${hash(c.ticker)}, veredicto ${VEREDICTOS[s1.veredicto].txt.toLowerCase()}, confianza ${pct(s1.confianza)}</span><span>${nf2.format(a.tiempos.s1)} ms</span></div>
@@ -456,7 +459,8 @@ async function mapaEnVivo() {
     if (!body.mapa?.length) return;
     mapaDatos = body.mapa;
     mapaVivo = { fecha: body.fecha };
-    renderMapa(true);
+    $("mapaAyuda").innerHTML = panelAyuda("mapa");
+renderMapa(true);
   } catch { /* queda el mapa del snapshot */ }
 }
 
@@ -537,6 +541,7 @@ function onAplicarJson() {
    Arranque
    ============================================================ */
 function eventos() {
+  document.addEventListener("click", e => { const b = (e.target as HTMLElement).closest<HTMLElement>(".ayuda-btn"); if (b) { e.stopPropagation(); alternarAyuda(b); } }, true);
   $("mapa").addEventListener("click", e => { const b = (e.target as HTMLElement).closest<HTMLElement>(".tile"); if (b) analizarTicker(b.dataset.t!); });
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renderMapa(), 120); }).observe($("mapaSec"));
@@ -570,5 +575,6 @@ $("bgRosette").setAttribute("d", rosettePath(hash("GRAHAM-1949"), 48));
 eventos();
 renderAll();
 detectarServidor().then(s => { servidor = s; renderEstado(); if (s) mapaEnVivo(); });
+$("mapaAyuda").innerHTML = panelAyuda("mapa");
 renderMapa(true);
 getSample().then(s => { sampleDisponible = !!s; });
