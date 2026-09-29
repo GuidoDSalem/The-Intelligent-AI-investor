@@ -2,7 +2,7 @@ import type { Empresa } from "./tipos.ts";
 
 /** Empresas y cifras ficticias, elegidas para mostrar cada caso del motor. Montos en millones. */
 export const EJEMPLOS: Empresa[] = ([
-  { ticker: "PLAC", nombre: "Pampa Lácteos", sector: "Consumo masivo", precio: 19, acciones: 200,
+  { ticker: "PLAC", nombre: "Pampa Lácteos", sector: "Consumo masivo", precio: 18, acciones: 200,
     eps: [1.60, 1.72, 1.80, 1.85, 1.98, 2.10, 2.15, 2.30, 2.42, 2.55],
     ventas: 9000, patrimonio: 3400, activoCorriente: 2600, pasivoCorriente: 1200, caja: 400, deudaTotal: 1100, deudaLP: 900,
     ebit: 780, depreciaciones: 260, intereses: 70, flujoOperativo: 700, capex: 260, aniosDividendos: 24 },

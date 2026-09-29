@@ -27,6 +27,22 @@ const gauss = (rnd: () => number) => {
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 const has = (v: number | null | undefined): v is number => v !== null && v !== undefined && Number.isFinite(v);
 
+/**
+ * Tendencia de la EPS: ajuste lineal de log(EPS) contra el tiempo (sólo si todas son positivas).
+ * `volatilidad` es el desvío de los residuos: mide los ciclos alrededor de la tendencia,
+ * no el crecimiento (una empresa que crece 30 % por año de forma pareja tiene volatilidad baja).
+ */
+export function tendenciaEps(eps: number[]) {
+  const n = eps.length;
+  if (n < 4 || eps.some(e => e <= 0)) return null;
+  const xs = eps.map((_, i) => i), ys = eps.map(Math.log);
+  const mx = avg(xs), my = avg(ys);
+  const b = xs.reduce((s, x, i) => s + (x - mx) * (ys[i] - my), 0) / xs.reduce((s, x) => s + (x - mx) ** 2, 0);
+  const a = my - b * mx;
+  const resid = ys.map((y, i) => y - (a + b * i));
+  return { crecimiento: Math.exp(b) - 1, volatilidad: Math.sqrt(resid.reduce((s, r) => s + r * r, 0) / (n - 2)), epsTendencia: Math.exp(a + b * (n - 1)) };
+}
+
 export function flujoDescontado(base: number, g1: number, r: number, gT: number, H: number) {
   let v = 0, f = base;
   for (let t = 1; t <= H; t++) { f *= 1 + g1; v += f / Math.pow(1 + r, t); }
@@ -48,7 +64,12 @@ export function capaDeterministica(c: Empresa, S: Supuestos = SUPUESTOS) {
   const cagr = epsIni > 0 && epsFin > 0 && n > 3 ? Math.pow(epsFin / epsIni, 1 / (n - 3)) - 1 : null;
   const sd = Math.sqrt(avg(c.eps.map(e => (e - eps10) ** 2)));
   const cv = eps10 > 0 ? sd / eps10 : Infinity;
-  const ciclica = !!c.ciclica || (!banco && cv > 0.6 && positivos >= n - 2);
+  const tend = tendenciaEps(c.eps);
+  // Caídas fuertes año contra año (para cuando hay pérdidas y no se puede ajustar la tendencia).
+  const caidas = c.eps.slice(1).filter((e, i) => e < c.eps[i] - 0.3 * Math.abs(c.eps[i])).length;
+  /** Volatilidad alrededor de la tendencia (≈ desvío relativo). */
+  const volatilidad = tend ? tend.volatilidad : Math.min(1.5, Number.isFinite(cv) ? cv : 1.5);
+  const ciclica = !!c.ciclica || (!banco && positivos >= n - 2 && (tend ? tend.volatilidad > 0.35 : caidas >= 2));
 
   const gananciaNeta = c.eps[n - 1] * c.acciones;
   const vlpa = c.patrimonio / c.acciones;
@@ -73,10 +94,14 @@ export function capaDeterministica(c: Empresa, S: Supuestos = SUPUESTOS) {
   const evEbitda = ev !== null && ebitda && ebitda > 0 ? ev / ebitda : null;
 
   // Base de valuación (por acción)
-  const epsBase = ciclica ? eps10 : epsFin;
-  const g1 = ciclica ? 0.02 : clamp(cagr ?? 0, S.crecimientoLimites[0], S.crecimientoLimites[1]);
+  // Cíclicas: EPS normalizada = valor de tendencia del último año (o el promedio si hubo pérdidas).
+  const epsNormal = tend ? Math.min(tend.epsTendencia, Math.max(epsFin, eps10)) : eps10;
+  const epsBase = ciclica ? epsNormal : epsFin;
+  const crecBase = ciclica ? (tend ? tend.crecimiento : cagr ?? 0.04) / 2 : (cagr ?? 0);
+  const g1 = clamp(crecBase, S.crecimientoLimites[0], S.crecimientoLimites[1]);
   const fcfpa = fcf !== null ? fcf / c.acciones : null;
-  const baseFlujo = banco ? null : ciclica ? eps10 * clamp(conversion ?? 0.8, 0.3, 1.1) : fcfpa;
+  const flujoBajo = !banco && !ciclica && fcfpa !== null && epsFin > 0 && fcfpa < S.conversionMinima * epsFin;
+  const baseFlujo = banco ? null : ciclica ? epsNormal * clamp(conversion ?? 0.8, S.conversionMinima, 1.1) : flujoBajo ? S.conversionMinima * epsFin : fcfpa;
   const rMed = avg(S.tasa), gTMed = avg(S.crecimientoTerminal);
 
   const valuaciones: Valuacion[] = [];
@@ -86,10 +111,10 @@ export function capaDeterministica(c: Empresa, S: Supuestos = SUPUESTOS) {
     const pbJust = (roe - gTMed) / (rMed - gTMed);
     valuaciones.push({ id: "pbjust", nombre: "P/B justificado (financiera)", valor: Math.max(0, pbJust * vlpa), formula: "VLPA × (ROE − g) / (r − g)" });
   } else if (baseFlujo !== null) {
-    valuaciones.push({ id: "dcf", nombre: "Flujo descontado (caso base)", valor: Math.max(0, flujoDescontado(baseFlujo, g1, rMed, gTMed, S.horizonte)), formula: `FCF ${nf2.format(baseFlujo)}, g ${nf1.format(g1 * 100)} % × ${S.horizonte} años, r ${nf1.format(rMed * 100)} %` });
+    valuaciones.push({ id: "dcf", nombre: "Flujo descontado (caso base)", valor: Math.max(0, flujoDescontado(baseFlujo, g1, rMed, gTMed, S.horizonte)), formula: `${flujoBajo ? `${Math.round(S.conversionMinima * 100)} % de la EPS (FCF bajo)` : ciclica ? "FCF normalizado" : "FCF"} ${nf2.format(baseFlujo)}, g ${nf1.format(g1 * 100)} % × ${S.horizonte} años, r ${nf1.format(rMed * 100)} %` });
   }
   if (epsBase > 0) {
-    const g = clamp((ciclica ? 0.02 : cagr ?? 0) * 100, 0, 15);
+    const g = clamp(crecBase * 100, 0, 15);
     valuaciones.push({ id: "crec", nombre: "Fórmula de crecimiento", valor: epsBase * (8.5 + 2 * g), formula: `${nf2.format(epsBase)} × (8,5 + 2 × ${nf1.format(g)})` });
   }
 
@@ -108,7 +133,7 @@ export function capaDeterministica(c: Empresa, S: Supuestos = SUPUESTOS) {
   ];
 
   return {
-    anios: n, banco, ciclica, epsIni, epsFin, eps10, positivos, crecimiento, cagr, cv, gananciaNeta, vlpa, roe, margenNeto, margenOperativo,
+    anios: n, flujoBajo, banco, ciclica, epsIni, epsFin, eps10, epsNormal, positivos, crecimiento, cagr, cv, volatilidad, gananciaNeta, vlpa, roe, margenNeto, margenOperativo,
     liquidez, capitalTrabajo, ebitda, deudaNeta, deudaNetaEbitda, sinDeuda, cobertura, fcf, fcfpa, conversion,
     capitalizacion, pe, pb, fcfYield, ev, evEbitda, epsBase, g1, baseFlujo, valuaciones, criterios,
   };
@@ -135,7 +160,7 @@ export function senalesCalidad(d: Determinista): Senal[] {
   add("Rentabilidad sobre patrimonio", d.vlpa > 0 ? (d.roe - 0.1) * 12 : -1.5, d.vlpa > 0 ? `${nf1.format(d.roe * 100)} %` : "patrimonio negativo");
   add("Consistencia", (d.positivos - (d.anios - 1)) * 0.6, `${d.positivos}/${d.anios} años con ganancia`);
   add("Crecimiento", d.ciclica ? 0 : d.cagr === null ? -1 : clamp(d.cagr * 10, -1, 1), d.ciclica ? "cíclico, no cuenta" : d.cagr === null ? "sin base" : `${nf1.format(d.cagr * 100)} %/año`);
-  add("Estabilidad", Number.isFinite(d.cv) ? clamp(0.6 - d.cv * 2.5, -1.5, 0.6) : -1.5, Number.isFinite(d.cv) ? `variación ${nf2.format(d.cv)}` : "muy inestable");
+  add("Estabilidad", clamp(0.6 - d.volatilidad * 2.5, -1.5, 0.6), d.volatilidad >= 1.5 ? "muy inestable" : `desvío de la tendencia ${nf2.format(d.volatilidad)}`);
   if (!d.banco) {
     add("Liquidez", d.liquidez === null ? 0 : clamp((d.liquidez - 1.5) * 0.8, -1, 1), d.liquidez === null ? "sin dato" : nf2.format(d.liquidez));
     add("Endeudamiento", d.deudaNetaEbitda === null ? 0 : (2 - d.deudaNetaEbitda) * 0.5, d.deudaNetaEbitda === null ? "sin dato" : `${nf1.format(d.deudaNetaEbitda)}× EBITDA`);
@@ -148,7 +173,7 @@ export function senalesCalidad(d: Determinista): Senal[] {
 export function sistema1(c: Empresa, d: Determinista, S: Supuestos = SUPUESTOS) {
   const rnd = rng(hash(c.ticker + JSON.stringify(c.eps) + c.precio + S.version));
   const N = S.simulaciones, vals = new Float64Array(N);
-  const sigma = clamp(d.cv * 0.5, 0.08, 0.45);
+  const sigma = clamp(d.volatilidad * 0.5, 0.08, 0.45);
   for (let i = 0; i < N; i++) {
     const r = S.tasa[0] + rnd() * (S.tasa[1] - S.tasa[0]);
     const gT = S.crecimientoTerminal[0] + rnd() * (S.crecimientoTerminal[1] - S.crecimientoTerminal[0]);
@@ -219,7 +244,7 @@ export function justificar(c: Empresa, d: Determinista, s1: Sistema1, S: Supuest
   out.push(`Cumple ${aplican.length - fallan.length} de ${aplican.length} criterios de Graham${fallan.length ? `; falla en ${fallan.map(k => k.nombre.toLowerCase()).join(", ")}` : ""}.`);
   const ord = [...s1.senales].sort((a, b) => b.valor - a.valor);
   out.push(`Calidad del negocio ${pct(s1.calidad)}: lo más fuerte es ${ord[0].nombre.toLowerCase()} (${ord[0].texto}); lo más débil, ${ord.at(-1)!.nombre.toLowerCase()} (${ord.at(-1)!.texto}).`);
-  if (d.ciclica) out.push(`Es cíclica: el motor valúa con la ganancia promedio de ${c.eps.length} años (${nf2.format(d.eps10)}) en lugar de la reciente (${nf2.format(d.epsFin)}).`);
+  if (d.ciclica) out.push(`Es cíclica (sus ganancias se desvían mucho de la tendencia): el motor valúa con una ganancia normalizada de ${nf2.format(d.epsNormal)} por acción, ${tendenciaEps(c.eps) ? "según la tendencia de" : "el promedio de"} ${c.eps.length} años, en lugar de la reciente (${nf2.format(d.epsFin)}).`);
   if (d.banco) out.push("Es una financiera: la deuda es su materia prima, así que liquidez y endeudamiento no aplican; se valúa por P/B justificado según su ROE.");
   return out;
 }

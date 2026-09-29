@@ -28,7 +28,7 @@ const store = {
 const SNAPSHOT: Snapshot = window.__SNAPSHOT__ ?? { generado: "", empresas: [] };
 let mias: Empresa[] = store.get("mg.mias", []);
 let S2: Record<string, RespuestaS2> = store.get("mg.s2", {});
-const UI = Object.assign({ filtro: "todas", orden: "margen", vista: "grid", verEjemplos: !SNAPSHOT.empresas.length }, store.get("mg.ui", {}));
+const UI = Object.assign({ filtro: "todas", orden: "margen", vista: "grid", verEjemplos: !SNAPSHOT.empresas.length }, store.get("mg.ui2", {}));
 if (!SNAPSHOT.empresas.length && !mias.length) UI.verEjemplos = true;
 let servidor: EstadoServidor | null = null;
 let analisis: Analisis[] = [];
@@ -50,7 +50,7 @@ function guardarMia(e: Empresa) {
   mias = mias.filter(m => m.ticker !== e.ticker).concat(e);
   store.set("mg.mias", mias);
 }
-const saveUI = () => store.set("mg.ui", UI);
+const saveUI = () => store.set("mg.ui2", UI);
 
 /* ============================================================
    Render de la lista

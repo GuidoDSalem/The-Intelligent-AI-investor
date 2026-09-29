@@ -1,6 +1,6 @@
 /** Supuestos del motor: todo número que no viene del balance vive acá. */
 export const SUPUESTOS = {
-  version: "2",
+  version: "3",
   simulaciones: 4000,
   /** Rendimiento exigido r ~ U(a, b). */
   tasa: [0.09, 0.12] as [number, number],
@@ -14,6 +14,11 @@ export const SUPUESTOS = {
   umbralComprar: 1.5,
   /** Valor mediano < 0,85 × precio: cara. */
   umbralCara: 0.85,
+  /**
+   * Si el flujo de caja libre es menos que esta fracción de la ganancia (p. ej. por inversión récord),
+   * la base de la valuación pasa a ser esta fracción de la ganancia: Graham valuaba por ganancias.
+   */
+  conversionMinima: 0.6,
   /** Debajo de esta confianza el caso se escala al Sistema 2. */
   confianzaMinima: 0.35,
 };

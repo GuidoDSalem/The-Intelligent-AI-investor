@@ -27,6 +27,22 @@ describe("motor", () => {
     expect(ej("PLAC").s1.escalar).toHaveLength(0);
   });
 
+  it("no confunde crecimiento sostenido con un ciclo", () => {
+    const base = { ...EJEMPLOS.find(e => e.ticker === "ACME")!, ciclica: false };
+    const crece = analizar({ ...base, eps: [1, 1.3, 1.7, 2.2, 2.8, 3.7, 4.8, 6.3, 8.1, 10.6] });
+    expect(crece.d.ciclica).toBe(false);
+    expect(crece.d.volatilidad).toBeLessThan(0.1);
+    const acero = analizar({ ...base, eps: [0.5, 2.1, 0.4, 1.8, 3.0, 0.6, 0.9, 2.8, 3.1, 0.7] });
+    expect(acero.d.ciclica).toBe(true);
+  });
+
+  it("si la caja es muy baja frente a la ganancia, valúa por ganancia (inversión récord)", () => {
+    const e = { ...EJEMPLOS.find(x => x.ticker === "ACME")!, capex: 590 };
+    const a = analizar(e);
+    expect(a.d.flujoBajo).toBe(true);
+    expect(a.d.baseFlujo).toBeCloseTo(0.6 * a.d.epsFin);
+  });
+
   it("no aplica liquidez ni deuda a un banco", () => {
     const a = ej("BAUS");
     expect(a.d.criterios.find(k => k.nombre === "Liquidez corriente")?.pasa).toBeNull();

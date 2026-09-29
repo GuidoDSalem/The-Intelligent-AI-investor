@@ -19,3 +19,4 @@ sin framework de UI. Textos de la interfaz y documentación en español rioplate
   publicada en Claude usa la capacidad `sample` para el Sistema 2.
 - Estilo visual: tokens en `:root` de `src/web/estilos.css` (claro y oscuro).
 - Para probar el servidor sin red, se puede sembrar `.cache/edgar/` con los JSON del fixture.
+- En la nube, Node necesita `NODE_USE_ENV_PROXY=1` para que `fetch` use el proxy del entorno (EDGAR, Yahoo).

@@ -102,6 +102,6 @@ export function epsChart(a: Analisis): string {
   const line = (v: number, lbl: string, col: string) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${col}" stroke-dasharray="4 3"></line><text x="${L - 4}" y="${y(v) + 4}" text-anchor="end" style="fill:${col}">${nf2.format(v)}</text><text x="${W - R}" y="${y(v) - 5}" text-anchor="end" style="fill:${col}">${lbl}</text>`;
   return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ganancia por acción por año">
     <line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--ink-3)"></line>${bars}
-    ${line(a.d.epsFin, "promedio últimos 3 años", "var(--ink-2)")}${a.d.ciclica ? line(a.d.eps10, `promedio ${eps.length} años (normalizada)`, "var(--engrave)") : ""}
+    ${line(a.d.epsFin, "promedio últimos 3 años", "var(--ink-2)")}${a.d.ciclica ? line(a.d.epsNormal, "ganancia normalizada", "var(--engrave)") : ""}
   </svg></div>`;
 }
