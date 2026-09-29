@@ -1,68 +1,96 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { empresaEdgar } from "../src/edgar/cliente.ts";
+import { candidatasPorTamano, cotizacion, empresaEdgar } from "../src/edgar/cliente.ts";
 import type { Empresa } from "../src/engine/tipos.ts";
 
 /**
  * Baja de EDGAR las empresas pedidas y las guarda en data/snapshot.json, que el build embebe en la
  * página publicada (que no puede consultar EDGAR por sí misma).
  *
- *   SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot                 # las 10 más grandes del S&P 500
- *   SEC_USER_AGENT="…" npm run snapshot -- --top 15                          # las 15 más grandes
- *   SEC_USER_AGENT="…" npm run snapshot -- KO JNJ NUE=72.5                   # tickers puntuales (precio a mano con =)
- *   SEC_USER_AGENT="…" npm run snapshot -- --precios precios.json            # {"NVDA": 180.2, ...}
- *   SEC_USER_AGENT="…" npm run snapshot -- --agregar XOM                     # suma al snapshot existente
+ *   SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot     # las 100 mayores; se muestran las 10 primeras
+ *   … npm run snapshot -- --top 15 --incluir 200                  # mostrar 15, guardar 200 para buscar
+ *   … npm run snapshot -- --precios precios.json                  # {"NVDA": 180.2, …} en vez de Yahoo
+ *   … npm run snapshot -- KO JNJ NUE=72.5 --agregar               # tickers puntuales (precio a mano con =)
  *
- * Sin tickers, baja las candidatas a mayores del S&P 500, calcula la capitalización
- * (acciones de EDGAR × precio) y se queda con las `--top` más grandes (10 por defecto).
+ * Sin tickers, las candidatas salen de EDGAR (frames de acciones en circulación y valor de mercado de todas
+ * las empresas que presentan 10-K), se ordenan por acciones × precio y se guardan las `--incluir` más grandes.
+ * Las `--top` primeras quedan como destacadas: son las que la página muestra al abrir.
  */
-const CANDIDATAS = [
-  "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "AVGO", "TSLA", "BRK-B", "JPM", "LLY", "WMT", "ORCL", "V", "MA",
-  "NFLX", "XOM", "COST", "JNJ", "PLTR", "AMD", "HD", "ABBV", "BAC", "PG", "UNH",
-];
-
 const args = process.argv.slice(2);
 const opcion = (n: string) => { const i = args.indexOf(n); return i >= 0 ? args.splice(i, 2)[1] : undefined; };
 const top = Number(opcion("--top") ?? 10);
+const incluir = Math.max(top, Number(opcion("--incluir") ?? 100));
 const archivoPrecios = opcion("--precios");
 const agregar = args.includes("--agregar");
 const pedidos = args.filter(a => !a.startsWith("--"));
-const porDefecto = !pedidos.length;
-
 const precios: Record<string, number> = archivoPrecios ? JSON.parse(await readFile(archivoPrecios, "utf8")) : {};
-const lista = (porDefecto ? CANDIDATAS : pedidos).map(a => {
-  const [t, p] = a.split("=");
-  const ticker = t.toUpperCase();
-  return { ticker, precio: p ? Number(p) : precios[ticker] };
-});
 
-const previas: Empresa[] = agregar && existsSync("data/snapshot.json") ? JSON.parse(await readFile("data/snapshot.json", "utf8")).empresas : [];
-const bajadas: Empresa[] = [];
+const previo = agregar && existsSync("data/snapshot.json") ? JSON.parse(await readFile("data/snapshot.json", "utf8")) : null;
 const fallidas: string[] = [];
-for (const { ticker, precio } of lista) {
+const cap = (e: Empresa) => e.precio * e.acciones;
+
+async function bajar(ticker: string, precio?: number): Promise<Empresa | null> {
   try {
     const e = await empresaEdgar(ticker, precio);
-    if (!(e.precio > 0)) { fallidas.push(`${ticker}: sin precio (pasalo como ${ticker}=precio o en --precios)`); continue; }
-    bajadas.push(e);
-    console.log(`✓ ${e.ticker.padEnd(6)} ${e.nombre} · ejercicio ${e.fuente?.cierre} · precio ${e.precio} · capitalización ${Math.round((e.precio * e.acciones) / 1000)} mil M`);
+    if (!(e.precio > 0)) { fallidas.push(`${ticker}: sin precio (pasalo como ${ticker}=precio o en --precios)`); return null; }
+    console.log(`✓ ${e.ticker.padEnd(6)} ${e.nombre.slice(0, 34).padEnd(34)} ejercicio ${e.fuente?.cierre} · $${e.precio} · ${Math.round(cap(e) / 1000)} mil M`);
+    return e;
   } catch (err) {
     fallidas.push(`${ticker}: ${(err as Error).message}`);
+    return null;
   }
 }
 
-let elegidas = bajadas;
-if (porDefecto) {
-  elegidas = [...bajadas].sort((a, b) => b.precio * b.acciones - a.precio * a.acciones).slice(0, top);
-  console.log(`\nLas ${elegidas.length} más grandes por capitalización: ${elegidas.map(e => e.ticker).join(", ")}`);
+let empresas: Empresa[] = [];
+let destacadas: string[] = [];
+let criterio: string;
+
+if (pedidos.length) {
+  for (const a of pedidos) {
+    const [t, p] = a.split("=");
+    const e = await bajar(t.toUpperCase(), p ? Number(p) : precios[t.toUpperCase()]);
+    if (e) empresas.push(e);
+  }
+  criterio = "Tickers elegidos a mano";
+} else {
+  // 1. Preselección con datos de portada de todas las empresas (una sola consulta por trimestre).
+  const cands = await candidatasPorTamano();
+  // Unión de dos criterios: el public float (falta en algunas, como AMD) y la cantidad de acciones.
+  const porFlotante = [...cands].sort((a, b) => (b.flotante ?? 0) - (a.flotante ?? 0)).slice(0, incluir + 80);
+  const porAcciones = [...cands].sort((a, b) => (b.acciones ?? 0) - (a.acciones ?? 0)).slice(0, incluir * 3);
+  const preseleccion = [...new Map([...porFlotante, ...porAcciones].map(c => [c.cik, c])).values()];
+  console.log(`${cands.length} empresas con datos de portada; consulto precios de ${preseleccion.length}…`);
+
+  // 2. Capitalización preliminar = acciones de portada × precio (el public float es viejo y a veces está mal escalado).
+  const prelim: { ticker: string; precio?: number; valor: number }[] = [];
+  for (const c of preseleccion) {
+    const cot = precios[c.ticker] ? { precio: precios[c.ticker] } : await cotizacion(c.ticker);
+    const valor = cot && c.acciones ? cot.precio * c.acciones : c.flotante ?? 0;
+    prelim.push({ ticker: c.ticker, precio: cot?.precio, valor });
+  }
+  prelim.sort((a, b) => b.valor - a.valor);
+
+  // 3. Datos completos de EDGAR, en orden, hasta juntar `incluir` + 20 empresas; con la capitalización real
+  //    (acciones del 10-K × precio) se descartan las que se colaron por datos de portada mal escalados.
+  for (const c of prelim) {
+    if (empresas.length >= incluir + 20) break;
+    const e = await bajar(c.ticker, c.precio);
+    if (e) empresas.push(e);
+  }
+  empresas = empresas.sort((a, b) => cap(b) - cap(a)).slice(0, incluir);
+  destacadas = empresas.slice(0, top).map(e => e.ticker);
+  criterio = `Las ${empresas.length} mayores empresas de EE. UU. que presentan 10-K, por acciones × precio; se muestran las ${top} primeras`;
+  console.log(`\nDestacadas (las ${top} mayores): ${destacadas.join(", ")}`);
 }
 
-const out = new Map(previas.map(e => [e.ticker, e]));
-for (const e of elegidas) out.set(e.ticker, e);
+if (previo) {
+  const nuevas = new Set(empresas.map(e => e.ticker));
+  empresas = [...(previo.empresas as Empresa[]).filter(e => !nuevas.has(e.ticker)), ...empresas];
+  destacadas = previo.destacadas ?? [];
+  criterio = previo.criterio ?? criterio;
+}
+
 await mkdir("data", { recursive: true });
-await writeFile("data/snapshot.json", JSON.stringify({
-  generado: new Date().toISOString(),
-  criterio: porDefecto ? `Las ${top} mayores por capitalización entre ${CANDIDATAS.length} candidatas del S&P 500` : "Tickers elegidos a mano",
-  empresas: [...out.values()],
-}, null, 1));
-console.log(`${out.size} empresas en data/snapshot.json.`);
+await writeFile("data/snapshot.json", JSON.stringify({ generado: new Date().toISOString(), criterio, destacadas, empresas }));
+console.log(`${empresas.length} empresas en data/snapshot.json.`);
 if (fallidas.length) console.log("\nNo se pudieron agregar:\n  " + fallidas.join("\n  "));

@@ -76,15 +76,62 @@ export async function datosCrudos(ticker: string) {
   return { info, cf, sub };
 }
 
+/**
+ * Candidatas a las empresas más grandes, sin elegirlas a mano: la API "frames" de EDGAR devuelve un mismo dato
+ * de portada para todas las empresas a la vez. Se usan las acciones en circulación y el valor de mercado en manos
+ * del público (public float, que viene con errores de escala en algunas empresas: sólo sirve para preseleccionar).
+ */
+export interface Candidata { cik: string; ticker: string; nombre: string; acciones: number | null; flotante: number | null }
+
+interface Frame { data: { cik: number; entityName: string; end: string; val: number }[] }
+
+function trimestres(cuantos: number, hoy = new Date()): string[] {
+  const out: string[] = [];
+  let y = hoy.getUTCFullYear(), q = Math.floor(hoy.getUTCMonth() / 3) + 1;
+  for (let i = 0; i < cuantos; i++) {
+    out.push(`CY${y}Q${q}I`);
+    if (--q === 0) { q = 4; y--; }
+  }
+  return out;
+}
+
+async function ultimoPorCik(concepto: string, unidad: string, periodos: string[]): Promise<Map<string, number>> {
+  const m = new Map<string, { end: string; val: number }>();
+  for (const per of periodos) {
+    let f: Frame;
+    try { f = await conCache<Frame>(`frame-${concepto}-${per}.json`, `https://data.sec.gov/api/xbrl/frames/dei/${concepto}/${unidad}/${per}.json`, 7 * UN_DIA); }
+    catch { continue; } // el trimestre en curso todavía puede no existir
+    for (const d of f.data) {
+      const k = String(d.cik).padStart(10, "0"), prev = m.get(k);
+      if (!prev || d.end > prev.end) m.set(k, { end: d.end, val: d.val });
+    }
+  }
+  return new Map([...m].map(([k, v]) => [k, v.val]));
+}
+
+export async function candidatasPorTamano(): Promise<Candidata[]> {
+  const acciones = await ultimoPorCik("EntityCommonStockSharesOutstanding", "shares", trimestres(4));
+  const flotante = await ultimoPorCik("EntityPublicFloat", "USD", trimestres(8));
+  const porCik = new Map<string, TickerSec>();
+  for (const t of await listaTickers()) if (!porCik.has(t.cik)) porCik.set(t.cik, t);
+  const ciks = new Set([...acciones.keys(), ...flotante.keys()]);
+  return [...ciks].flatMap(cik => {
+    const t = porCik.get(cik);
+    if (!t) return [];
+    const acc = acciones.get(cik), fl = flotante.get(cik);
+    return [{ cik, ticker: t.ticker, nombre: t.nombre, acciones: acc ? acc / 1e6 : null, flotante: fl ? fl / 1e6 : null }];
+  });
+}
+
 export interface Cotizacion { precio: number; fecha: string; fuente: string }
 
 /**
- * Último precio de cierre. Prueba Stooq y después Yahoo Finance (ninguno pide clave).
+ * Último precio. Prueba Yahoo Finance y después Stooq (ninguno pide clave).
  * Es opcional: si ambos fallan devuelve null y el usuario ingresa el precio. PRECIOS=off lo desactiva.
  */
 export async function cotizacion(ticker: string): Promise<Cotizacion | null> {
   if (process.env.PRECIOS === "off") return null;
-  return (await precioStooq(ticker)) ?? (await precioYahoo(ticker));
+  return (await precioYahoo(ticker)) ?? (await precioStooq(ticker));
 }
 
 async function precioStooq(ticker: string): Promise<Cotizacion | null> {

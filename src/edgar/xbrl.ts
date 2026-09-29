@@ -82,11 +82,11 @@ function instantes(hs: Hecho[]): Map<string, Hecho> {
 }
 
 const SPLITS = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 40, 50];
-function factorSplit(r: number): number | null {
+function factorSplit(r: number, tolerancia = 0.03): number | null {
   const inv = r < 1;
   const x = inv ? 1 / r : r;
   if (x < 1.4) return null;
-  const s = SPLITS.find(k => Math.abs(x - k) / k < 0.03);
+  const s = SPLITS.find(k => Math.abs(x - k) / k < tolerancia);
   return s ? (inv ? 1 / s : s) : null;
 }
 
@@ -190,7 +190,7 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
   const { porCierre, splits } = epsAjustado(epsH);
   const cierres = [...porCierre.keys()].sort().slice(-maxAnios);
   if (cierres.length < 4) throw new ErrorEdgar(`Hay sólo ${cierres.length} ejercicios con ganancia por acción en EDGAR; el motor necesita al menos 4.${cierres.length === 0 ? " " + CLASES : ""}`);
-  const eps = cierres.map(k => porCierre.get(k)!);
+  let eps = cierres.map(k => porCierre.get(k)!);
   const cierre = cierres.at(-1)!;
   for (const s of splits) avisos.push(`EPS ajustado por un split ${s.factor >= 1 ? `${s.factor}:1` : `1:${Math.round(1 / s.factor)}`} (re-expresado en un 10-K presentado el ${s.desde}).`);
 
@@ -245,6 +245,17 @@ export function empresaDesdeEdgar(cf: CompanyFacts, sub: Submissions, ticker: st
     const accn = ultimos.reduce((m, h) => (h.filed > m.filed ? h : m)).accn;
     const portada = ultimos.filter(h => h.accn === accn).reduce((s, h) => s + h.val, 0) / 1e6;
     if (dias(cierre, ultimaFecha) > -60 && cierra(portada)) acciones = portada;
+    else if (dias(cierre, ultimaFecha) > 0 && gn && eps.at(-1)) {
+      // Split posterior al último 10-K: la portada ya tiene las acciones nuevas y el precio de hoy también,
+      // pero la EPS sigue en la base vieja (Booking, 25:1 en 2026).
+      const f = factorSplit(portada / (gn / eps.at(-1)!), 0.1); // más tolerancia: hubo recompras en el medio
+      // Sólo splits hacia arriba: una portada con menos acciones suele ser una sola clase, no un split inverso.
+      if (f && f > 1) {
+        eps = eps.map(v => v / f);
+        acciones = portada;
+        avisos.push(`EPS ajustado por un split ${f >= 1 ? `${f}:1` : `1:${Math.round(1 / f)}`} posterior al último 10-K (la portada del ${ultimaFecha} ya informa ${Math.round(portada)} M de acciones).`);
+      }
+    }
   }
   if (!acciones) {
     const prom = M(anual(ETIQ.accionesPromedio, "shares"));

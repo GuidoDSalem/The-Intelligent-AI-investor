@@ -9,7 +9,7 @@ import { epsChart, esc, logoSVG, rangeBar, rosettePath, sparkSVG, valuationChart
 /* ============================================================
    Estado y fuentes de datos
    ============================================================ */
-interface Snapshot { generado: string; empresas: Empresa[] }
+interface Snapshot { generado: string; criterio?: string; destacadas?: string[]; empresas: Empresa[] }
 interface EstadoServidor { edgar: boolean; claude: boolean; modeloS2: string; precios: boolean }
 type Sample = ((input: string, opts?: object) => Promise<{ text: string }>) & { json: (input: string, opts?: object) => Promise<unknown> };
 declare global {
@@ -42,7 +42,8 @@ function empresas(): Empresa[] {
   const propias = new Set(mias.map(m => m.ticker));
   return [
     ...mias,
-    ...SNAPSHOT.empresas.filter(e => !propias.has(e.ticker)),
+    // Del snapshot se muestran sólo las destacadas; el resto se agrega buscándolo por ticker.
+    ...SNAPSHOT.empresas.filter(e => !propias.has(e.ticker) && (!SNAPSHOT.destacadas?.length || SNAPSHOT.destacadas.includes(e.ticker))),
     ...(UI.verEjemplos ? EJEMPLOS : []),
   ];
 }
@@ -72,7 +73,7 @@ function renderEstado() {
     partes.push(`<span class="dot ${servidor.claude ? "on" : ""}">${servidor.claude ? `Sistema 2 con ${esc(servidor.modeloS2)}` : "Sistema 2 desactivado (falta ANTHROPIC_API_KEY)"}</span>`);
   } else {
     partes.push(`<span class="dot">Versión publicada: sin acceso directo a EDGAR</span>`);
-    if (SNAPSHOT.empresas.length) partes.push(`<span>${SNAPSHOT.empresas.length} empresas reales de EDGAR, datos al ${esc(SNAPSHOT.generado.slice(0, 10))}</span>`);
+    if (SNAPSHOT.empresas.length) partes.push(`<span>${SNAPSHOT.destacadas?.length ? `Se muestran las ${SNAPSHOT.destacadas.length} mayores; podés buscar cualquiera de las ${SNAPSHOT.empresas.length} más grandes de EE. UU.` : `${SNAPSHOT.empresas.length} empresas reales de EDGAR`} (datos al ${esc(SNAPSHOT.generado.slice(0, 10))})</span>`);
   }
   $("estado").innerHTML = partes.join("");
 }
@@ -368,15 +369,17 @@ async function onBuscar(ev: Event) {
   if (!t) { msg("Escribí un ticker.", "err"); return; }
   pendiente = null;
   if (servidor?.edgar) return traerDeEdgar(t, precio);
-  const conocida = empresas().find(e => e.ticker === t && e.fuente?.tipo !== "ejemplo");
+  const conocida = [...mias, ...SNAPSHOT.empresas].find(e => e.ticker === t);
   if (conocida) {
+    const visible = analisis.some(a => idDe(a.c) === idDe(conocida));
     if (precio && precio !== conocida.precio) terminarAlta({ ...conocida, precio, fuente: { ...(conocida.fuente ?? { tipo: "manual" }), precioFuente: "ingresado a mano", precioFecha: undefined } });
+    else if (!visible) terminarAlta(conocida);
     else { msg(""); openDetail(idDe(conocida)); }
     return;
   }
   msg(servidor
     ? "El servidor no tiene EDGAR habilitado (falta SEC_USER_AGENT). Podés cargar la empresa a mano."
-    : `${t} no está entre las empresas guardadas en esta versión publicada, que no puede consultar EDGAR. Para cualquier ticker corré el servidor local (npm start) o cargala a mano.`, "err");
+    : `${t} no está entre las ${SNAPSHOT.empresas.length} empresas guardadas en esta página. La versión publicada no puede consultar EDGAR en vivo: para cualquier ticker corré el servidor local (npm start) o cargala a mano.`, "err");
 }
 
 let buscarTimer: ReturnType<typeof setTimeout> | undefined;
@@ -391,7 +394,8 @@ function onEscribir() {
       try { lista = await (await fetch(`/api/buscar?q=${encodeURIComponent(q)}`)).json(); } catch { lista = []; }
     } else {
       const Q = q.toUpperCase();
-      lista = empresas().filter(e => e.fuente?.tipo !== "ejemplo" && (e.ticker.startsWith(Q) || e.nombre.toUpperCase().includes(Q)));
+      const vistos = new Set<string>();
+      lista = [...mias, ...SNAPSHOT.empresas].filter(e => !vistos.has(e.ticker) && vistos.add(e.ticker) && (e.ticker.startsWith(Q) || e.nombre.toUpperCase().includes(Q))).slice(0, 12);
     }
     dl.innerHTML = lista.map(x => `<option value="${esc(x.ticker)}">${esc(x.nombre)}</option>`).join("");
   }, 200);

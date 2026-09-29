@@ -46,12 +46,17 @@ Claude. Ahí el Sistema 2 usa la cuenta de Claude de quien la mira. Esa página 
 navegador bloquea otros dominios y la SEC no permite CORS), así que lleva embebido un snapshot:
 
 ```bash
-SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot              # las 10 mayores del S&P 500 por capitalización
-SEC_USER_AGENT="…" npm run snapshot -- --top 15                       # las 15 mayores
+SEC_USER_AGENT="Tu Nombre tu@email.com" npm run snapshot              # las 100 mayores; la página muestra las 10 primeras
+SEC_USER_AGENT="…" npm run snapshot -- --top 15 --incluir 200         # mostrar 15, guardar 200 para buscar
 SEC_USER_AGENT="…" npm run snapshot -- --precios precios.json         # precios a mano: {"NVDA": 180.2, …}
 SEC_USER_AGENT="…" npm run snapshot -- KO JNJ NUE=72.5 --agregar      # tickers puntuales, precio con TICKER=precio
 npm run build
 ```
+
+Las candidatas no se eligen a mano: salen de la API *frames* de EDGAR (acciones en circulación y valor de mercado
+de portada de todas las empresas que presentan 10-K), se ordenan por acciones × precio y se guardan las más
+grandes. En la página publicada se pueden buscar todas las del snapshot; cualquier otra empresa requiere el
+servidor local o la carga manual.
 
 ## Cómo se leen los datos de EDGAR
 
@@ -65,6 +70,8 @@ npm run build
   no, el promedio diluido del ejercicio.
 - Deuda: largo plazo + corriente, o la deuda combinada cuando no se informan por separado. D&A suma la
   amortización de intangibles cuando la depreciación viene sola. Si falta el capex, el flujo libre queda sin dato.
+- Splits posteriores al último 10-K (Booking, 25:1 en 2026): si la portada más reciente informa varias veces más
+  acciones que las que surgen de la ganancia neta, se ajusta la EPS.
 - Ejercicios de 52/53 semanas que cierran a principios de enero se rotulan con el año anterior.
 - Dividendos: años seguidos con pago, hacia atrás.
 - Sector y tipo (financiera, cíclica) según el código SIC.

@@ -123,4 +123,14 @@ describe("casos vistos en datos reales", () => {
     cf.facts["us-gaap"].EarningsPerShareDiluted.units["USD/shares"] = eps.map(h => ({ ...h, form: "10-Q" }));
     expect(() => empresaDesdeEdgar(cf, SUB, "TBC", 30)).toThrow(/trimestrales/);
   });
+
+  it("detecta un split posterior al último 10-K con la portada de un 10-Q (Booking)", () => {
+    const cf = facts();
+    // 4:1 después del 10-K, con algo de recompra: 1.520 M en vez de 1.600 M
+    cf.facts.dei.EntityCommonStockSharesOutstanding.units.shares.push({ end: "2024-07-25", val: 1520e6, accn: "q2-2024", form: "10-Q", filed: "2024-07-30" });
+    const e = empresaDesdeEdgar(cf, SUB, "TBC", 30);
+    expect(e.acciones).toBe(1520);
+    expect(e.eps.at(-1)).toBeCloseTo(1.9 / 4);
+    expect(e.fuente?.avisos?.some(a => a.includes("posterior al último 10-K"))).toBe(true);
+  });
 });
