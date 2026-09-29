@@ -59,6 +59,25 @@ de portada de todas las empresas que presentan 10-K), se ordenan por acciones ×
 grandes. En la página publicada se pueden buscar todas las del snapshot; cualquier otra empresa requiere el
 servidor local o la carga manual.
 
+## GitHub Pages (actualización diaria)
+
+El workflow `.github/workflows/pages.yml` publica la app en
+<https://guidodsalem.github.io/The-Intelligent-AI-investor/>:
+
+- En cada push a `main`: typecheck, tests, build y deploy.
+- De lunes a viernes a las 21:30 UTC (después del cierre de Wall Street): regenera `data/snapshot.json` con los
+  balances de EDGAR y los precios de Yahoo, lo commitea y publica. Si algo falla, publica el snapshot anterior.
+- Se puede correr a mano desde Actions → Pages → Run workflow.
+
+Hay que configurar dos cosas una sola vez:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. **Settings → Secrets and variables → Actions → New repository secret:** `SEC_USER_AGENT` con tu nombre y email
+   (`Nombre Apellido email@dominio`), que exige la SEC.
+
+La versión de Pages es estática, como el artifact: mapa y análisis de las empresas del snapshot, ayudas y carga
+manual. El análisis en vivo de cualquier ticker y el Sistema 2 necesitan el servidor local (`npm start`).
+
 ## Cómo se leen los datos de EDGAR
 
 `src/edgar/xbrl.ts` usa la API `companyfacts` (XBRL, us-gaap):
